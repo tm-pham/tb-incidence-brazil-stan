@@ -1,4 +1,4 @@
-# tb-incidence-brazil-stan
+# Estimating subnational TB incidence in Brazil using Bayesian evidence synthesis
 
 Bayesian evidence synthesis to estimate **true tuberculosis incidence at the
 municipality level in Brazil**, and the fraction of incident cases that are
@@ -6,8 +6,21 @@ detected and treated, from routinely collected SINAN notifications and SIM
 mortality data, fit in [Stan](https://mc-stan.org/) via cmdstanr.
 
 The estimand is true incidence, which is not directly observed. The method
-follows Chitwood et al. (see `literature/references.bib`). The papers and their
-supplements in `literature/private_pdfs/` are the methodological source of truth.
+follows Chitwood et al. (see `literature/references.bib`). 
+
+The project also serves as a working example of how AI-assisted coding workflows
+can support reproducible academic modeling. In particular, the repository uses
+structured project specifications, targeted review prompts, automated tests, and
+reproducibility checks.
+
+## Goals
+
+1. Estimate latent TB incidence by municipality.
+2. Combine information from notification and mortality data.
+3. Quantify uncertainty using Bayesian inference.
+4. Evaluate model fit using posterior predictive checks.
+5. Maintain a reproducible R/Stan workflow.
+6. Document where AI coding agents were useful and where human review was required.
 
 ## The identifying idea
 
