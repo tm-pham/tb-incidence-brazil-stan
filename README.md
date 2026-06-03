@@ -69,6 +69,39 @@ Makefile             Thin CLI over targets and tests
 See `CLAUDE.md` for the full conventions and the rules on the load-bearing
 priors.
 
+## Running the pipeline
+
+All commands run from the repo root (where `_targets.R` lives). The pipeline is a
+[targets](https://docs.ropensci.org/targets/) DAG: a networked **fetch** step
+that caches the raw SINAN / SIM / IBGE pulls to `data/interim/`, then a
+deterministic **assemble** step that writes the Stan data list to
+`outputs/stan_data/tb_stan_data.rds` with a vintage-stamped report in
+`outputs/logs/`.
+
+```bash
+make data       # build the Stan data (fetch if needed, then assemble)
+make fetch      # STEP 1 only: pull from DATASUS/IBGE -> data/interim/ (needs network)
+make test       # run the testthat suite
+make pipeline   # run the full targets pipeline
+make show       # list outdated targets
+```
+
+Or drive `targets` directly in an R session (working directory = repo root;
+opening the `.Rproj` in RStudio sets it for you):
+
+```r
+targets::tar_make()             # run / refresh the whole pipeline
+targets::tar_read(stan_data)    # inspect the assembled Stan data list
+targets::tar_visnetwork()       # view the DAG
+```
+
+The first run hits DATASUS/IBGE (via `microdatasus` / `sidrar`), so run it where
+those are reachable. Re-running only redoes what changed: after the one networked
+fetch, assembly rebuilds offline from the `data/interim/` cache. Override the
+analysis window with the `TB_YEAR_START` / `TB_YEAR_END` / `TB_UF` environment
+variables (defaults in `code/00_config/config.R`). Stage details are in
+`code/02_data_processing/README.md`.
+
 ## Reviewing
 
 `/review` launches five reviewers in parallel (data integrity, Stan model,
