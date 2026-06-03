@@ -68,6 +68,29 @@ so no refactor is needed once resolved.
    Uncritical reuse of state-level values would be a High epidemiology finding;
    justify or re-anchor when municipality data lands.
 
+## Data definitions (PI decisions, 2026-06-03)
+
+These define the observed numerators/denominators and so are part of the
+estimand. Encoded in `code/02_data_processing/`; do not change silently.
+
+- **TB-death definition (SIM).** Underlying cause (`CAUSABAS`) in A15-A19 only
+  (active TB); B90 sequelae excluded. Constant `TB_DEATH_ICD3` in `load_sim.R`.
+- **Notification numerator (SINAN).** Count new cases + relapses only; exclude
+  re-entry after default (re-engaging in care), transfer, and post-mortem.
+  Encoded as the `keep_entry` argument to `summarise_notifications()`. The raw
+  coded values for "new" and "relapse" must be confirmed against
+  `data/raw/TB_notifications/SINAN_TB_Variable_Dictionary.xlsx` before the
+  loader runs; the loader takes the codes explicitly so the rule is never
+  applied implicitly.
+- **Geography.** Attribute by municipality of residence, falling back to
+  municipality of notification/occurrence when residence is missing (e.g. Sao
+  Paulo records with a blank residence code in some years). Helper
+  `coalesce_muni_code()`. Codes reconciled to a 6-digit key (`normalise_muni6()`)
+  because SINAN uses 6-digit and IBGE/geobr use 7-digit.
+- **Open:** notification/diagnosis year basis (DT_DIAG vs DT_NOTIFIC vs
+  treatment-start) and the analysis year range are set in the orchestration
+  script, not yet fixed.
+
 ## SINAN-informed quantities (NOT priors)
 
 `p_death_tx` (deaths on treatment) and `p_ltfu` (fraction lost to follow-up) are

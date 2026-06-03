@@ -17,30 +17,7 @@
 #   * Counts must be non-negative integers; population must be present and
 #     strictly positive. Violations error with the offending rows.
 
-# --- Municipality code helper ----------------------------------------------
-
-#' Normalise an IBGE municipality code to a common join key.
-#'
-#' SINAN typically stores the 6-digit municipality code (the 7-digit IBGE code
-#' without its check digit); IBGE and geobr use the full 7-digit code. Joining
-#' across sources requires a common key. We reduce every code to its first 6
-#' digits, which is the lossless intersection of the two conventions.
-#'
-#' @param x A vector of municipality codes (integer or character).
-#' @return An integer vector of 6-digit codes.
-normalise_muni6 <- function(x) {
-  s <- trimws(as.character(x))
-  if (any(is.na(s) | s == "")) {
-    stop("normalise_muni6: municipality codes contain NA or empty values.")
-  }
-  nch <- nchar(s)
-  if (any(!nch %in% c(6L, 7L))) {
-    bad <- unique(s[!nch %in% c(6L, 7L)])
-    stop("normalise_muni6: codes must be 6 or 7 digits; got e.g. ",
-         paste(utils::head(bad, 5L), collapse = ", "), ".")
-  }
-  as.integer(substr(s, 1L, 6L))
-}
+source(here::here("code", "02_data_processing", "geo_utils.R"))
 
 # --- Internal validation helpers -------------------------------------------
 
