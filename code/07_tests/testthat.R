@@ -6,6 +6,11 @@
 library(testthat)
 library(data.table)
 
+# Pin the RNG state at suite launch so the run is reproducible. GLOBAL_SEED is
+# defined in config.R, sourced by .Rprofile at startup; fall back if a session
+# was started without it. Individual tests set their own seeds explicitly.
+if (exists("GLOBAL_SEED")) set.seed(GLOBAL_SEED) else set.seed(20240603L)
+
 test_dir(
   here::here("code", "07_tests", "testthat"),
   reporter = "summary",

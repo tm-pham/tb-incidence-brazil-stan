@@ -28,10 +28,20 @@
 
 #' Build and validate the natural-history parameter set.
 #'
-#' Defaults are the Chitwood 2021 prior means. `p_death_tx` (deaths on
-#' treatment) and `p_ltfu` (fraction lost to follow-up) stand in for the
-#' SINAN-informed treatment outcomes; in the real model these vary by area and
-#' time.
+#' Only `mu`, `delta`, `pi`, and `rho` are the load-bearing identifying priors
+#' (see CLAUDE.md); their defaults are the Chitwood 2021 prior means (`mu` and
+#' `delta` are confirmed to match the Beta means; `pi` and `rho` are provisional
+#' central values pending verification against the supplement, see
+#' literature/notes/priors.md). `p_death_tx` (deaths on treatment) and `p_ltfu`
+#' (fraction lost to follow-up) are NOT priors: they stand in for SINAN-observed
+#' treatment outcomes and in the real model vary by area and time. `delta` is the
+#' only estimated piece of the treated case-fatality.
+#'
+#' `pi` and `rho` are held as scalars here. They enter the death mean only as the
+#' product `pi * rho` and so are jointly identified only through their priors;
+#' `simulate_tb_counts()` accepts area-varying `pi`/`rho` vectors for when the
+#' poorly-defined-cause regression on `rho` is added (Phase 4). See the open
+#' decisions in literature/notes/priors.md.
 #'
 #' @return A list with the inputs plus derived case-fatality ratios
 #'   `cfr_treated` and `cfr_untreated`.
@@ -128,7 +138,12 @@ simulate_tb_counts <- function(population, alpha, beta,
 #' @param sigma_area_alpha,sigma_area_beta Area random-effect SDs.
 #' @param sigma_rw_alpha,sigma_rw_beta Year random-walk step SDs.
 #' @param nat Natural-history list from `tb_natural_history()`.
-#' @param pop_meanlog,pop_sdlog Lognormal parameters for area population.
+#' @param pop_meanlog,pop_sdlog Lognormal parameters for the baseline (first
+#'   year) area population. The generated population is continuous person-time
+#'   (the `gamma` offset), not an integer headcount.
+#' @param pop_growth_sd SD of the per-area annual log-growth rate. Population
+#'   then varies by area AND year (intercensal-estimate style), so the synthetic
+#'   data exercises year-aligned denominators in the Stan data assembly.
 #' @param seed Integer seed (scoped).
 simulate_tb_dataset <- function(n_areas = 100L, n_years = 5L,
                                 phi0 = -7.8, omega0 = 1.7,
@@ -140,6 +155,7 @@ simulate_tb_dataset <- function(n_areas = 100L, n_years = 5L,
                                 sigma_rw_beta = 0.05,
                                 nat = tb_natural_history(),
                                 pop_meanlog = 10.0, pop_sdlog = 1.0,
+                                pop_growth_sd = 0.01,
                                 seed = 1L) {
   if (n_areas < 1L || n_years < 1L) stop("n_areas and n_years must be >= 1.")
   if (length(phi) != 2L || length(omega) != 2L) {
@@ -147,10 +163,12 @@ simulate_tb_dataset <- function(n_areas = 100L, n_years = 5L,
   }
 
   built <- withr::with_seed(seed, {
-    # Area-level covariates (standardised) and population.
+    # Area-level covariates (standardised) and baseline (year 1) population.
     X <- cbind(fhs = stats::rnorm(n_areas), log_gdp = stats::rnorm(n_areas))
     population_area <- stats::rlnorm(n_areas, meanlog = pop_meanlog,
                                      sdlog = pop_sdlog)
+    # Per-area annual log-growth rate so population varies by area and year.
+    growth <- stats::rnorm(n_areas, mean = 0, sd = pop_growth_sd)
 
     # Demeaned area random effects.
     u <- stats::rnorm(n_areas, sd = sigma_area_alpha); u <- u - mean(u)
@@ -163,14 +181,17 @@ simulate_tb_dataset <- function(n_areas = 100L, n_years = 5L,
     }
     w <- rw(sigma_rw_alpha)
     s <- rw(sigma_rw_beta)
-    list(X = X, population_area = population_area, u = u, v = v, w = w, s = s)
+    list(X = X, population_area = population_area, growth = growth,
+         u = u, v = v, w = w, s = s)
   })
 
   grid <- data.table::CJ(area = seq_len(n_areas), year = seq_len(n_years))
   data.table::set(grid, j = "fhs",     value = built$X[grid$area, "fhs"])
   data.table::set(grid, j = "log_gdp", value = built$X[grid$area, "log_gdp"])
+  # Population is year-specific: baseline grown at the area's annual rate.
   data.table::set(grid, j = "population",
-                  value = built$population_area[grid$area])
+                  value = built$population_area[grid$area] *
+                    exp(built$growth[grid$area] * (grid$year - 1L)))
 
   lin_alpha <- phi0 + built$u[grid$area] + built$w[grid$year] +
     built$X[grid$area, "fhs"] * phi[1] + built$X[grid$area, "log_gdp"] * phi[2]

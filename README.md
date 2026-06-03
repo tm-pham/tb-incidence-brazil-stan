@@ -47,6 +47,12 @@ Makefile             Thin CLI over targets and tests
 - **targets** for the pipeline; **testthat** for tests.
 - Spatial data via **geobr**; population from **IBGE**.
 
+> **Note:** `renv.lock` is currently a placeholder. Run
+> `Rscript code/00_config/setup_renv.R` on a machine with CRAN access (the
+> committed lockfile cannot yet reproduce the environment) and commit the
+> regenerated lockfile. CmdStan and CRAN are network-blocked in the web
+> container.
+
 See `CLAUDE.md` for the full conventions and the rules on the load-bearing
 priors.
 
