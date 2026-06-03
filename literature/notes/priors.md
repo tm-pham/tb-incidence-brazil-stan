@@ -74,14 +74,32 @@ These define the observed numerators/denominators and so are part of the
 estimand. Encoded in `code/02_data_processing/`; do not change silently.
 
 - **TB-death definition (SIM).** Underlying cause (`CAUSABAS`) in A15-A19 only
-  (active TB); B90 sequelae excluded. Constant `TB_DEATH_ICD3` in `load_sim.R`.
+  (active TB); B90 sequelae excluded. Constant `TB_DEATH_ICD3` in `config.R`.
+  Scope: only the underlying cause is searched, NOT the contributory-cause lines
+  (`LINHAA`-`LINHAD`, `LINHAII`). This is the PI decision; TB deaths recorded
+  only as a contributory cause are intentionally not counted. (Flag for PI
+  re-confirmation: is underlying-cause-only intended, or should contributory
+  A15-A19 also count? A sensitivity analysis may be warranted.)
 - **Notification numerator (SINAN).** Count new cases + relapses only; exclude
   re-entry after default (re-engaging in care), transfer, and post-mortem.
-  Encoded as the `keep_entry` argument to `summarise_notifications()`. The raw
-  coded values for "new" and "relapse" must be confirmed against
-  `data/raw/TB_notifications/SINAN_TB_Variable_Dictionary.xlsx` before the
-  loader runs; the loader takes the codes explicitly so the rule is never
-  applied implicitly.
+  Encoded as the `keep_entry` argument to `summarise_notifications()`. Confirmed
+  against `SINAN_TB_Variable_Dictionary.xlsx`: the entry-type variable is
+  `TRATAMENTO` with 1=New case, 2=Relapse, 3=Re-entry after abandonment,
+  4=Unknown, 5=Transfer, 6=Post-mortem. Keep-set = codes `c("1", "2")`
+  (`SINAN_ENTRY_KEEP_CODES` in `config.R`), version-safe across SINAN v4/v5.
+  Estimand justification: the model identifies the rate of exit from untreated
+  active disease via treatment initiation. A new case (1) and a relapse (2, a
+  genuinely new episode after cure) are incident episodes and belong in the
+  numerator; re-entry after abandonment (3) is the SAME episode re-engaging in
+  care, so counting it would double-count one incident episode. (Flag for PI:
+  if some municipalities code treatment re-starts as new cases (1) rather than
+  re-entry (3), the exclusion will not catch them, a spatially heterogeneous
+  over-count; consider a code-1-vs-3 sensitivity analysis.)
+- **Treatment-outcome prior year (separation).** If a pre-baseline year is later
+  pulled to inform `p_death_tx`/`p_ltfu`, it must be a SEPARATE
+  `load_sinan_tb_notifications()` call and must NOT be passed to
+  `prepare_stan_data()`; mixing it into the main notification counts would
+  double-count cases. Noted in `run_data_processing.R`.
 - **Geography.** Attribute by municipality of residence, falling back to
   municipality of notification/occurrence when residence is missing (e.g. Sao
   Paulo records with a blank residence code in some years). Helper

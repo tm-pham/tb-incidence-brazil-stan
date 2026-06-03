@@ -6,29 +6,31 @@
 
 source(here::here("code", "02_data_processing", "geo_utils.R"))
 
-# Underlying-cause ICD-10 codes that count as a TB death.
-# PI decision (2026-06-03): active TB only, A15-A19; B90 (sequelae) excluded.
-# Recorded in literature/notes/priors.md. This is the death definition the
-# data_integrity reviewer checks; do not widen it silently.
-TB_DEATH_ICD3 <- c("A15", "A16", "A17", "A18", "A19")
-
 #' Reduce a standardised SIM death frame to TB-death counts by municipality-year.
 #'
-#' Pure: no I/O. (1) Keeps rows whose underlying cause (CAUSABAS) is an active-TB
+#' Pure: no I/O. (1) Keeps rows whose UNDERLYING cause (CAUSABAS) is an active-TB
 #' ICD-10 code; (2) attributes each death to municipality of residence, falling
 #' back to municipality of occurrence when residence is missing; (3) aggregates
 #' to non-negative integer counts on the 6-digit key. One input row is one death.
 #'
+#' SCOPE: only the underlying cause is searched, not the contributory-cause
+#' lines (LINHAA-LINHAD, LINHAII). This matches the PI decision (2026-06-03:
+#' A15-A19 underlying cause only); TB deaths recorded only as a contributory
+#' cause are intentionally not counted. See literature/notes/priors.md.
+#'
 #' @param sim data.table with the columns named by the *_col args below.
 #' @param icd3 Character vector of 3-character ICD-10 prefixes counted as a TB
-#'   death. Defaults to `TB_DEATH_ICD3` (A15-A19).
+#'   death. The canonical list is `TB_DEATH_ICD3` in config.R; the literal
+#'   default here keeps the pure function self-contained for direct/test use.
 #' @param cause_col Underlying-cause column (e.g. SIM `CAUSABAS`).
 #' @param res_col,occ_col Residence and occurrence municipality columns
 #'   (e.g. SIM `CODMUNRES`, `CODMUNOCOR`).
 #' @param year_col Integer year column (e.g. derived from `DTOBITO`).
 #' @return data.table(muni_code, year, deaths), one row per municipality-year.
+#'   The number of rows that took the occurrence fallback is attached as the
+#'   attribute `n_residence_fallback`.
 filter_tb_deaths <- function(sim,
-                             icd3 = TB_DEATH_ICD3,
+                             icd3 = c("A15", "A16", "A17", "A18", "A19"),
                              cause_col = "cause",
                              res_col = "muni_res",
                              occ_col = "muni_occ",
@@ -44,16 +46,21 @@ filter_tb_deaths <- function(sim,
   keep <- substr(causes, 1L, 3L) %in% icd3
   d <- sim[keep]
   if (!nrow(d)) {
-    return(data.table::data.table(muni_code = integer(), year = integer(),
-                                  deaths = integer()))
+    out <- data.table::data.table(muni_code = integer(), year = integer(),
+                                  deaths = integer())
+    data.table::setattr(out, "n_residence_fallback", 0L)
+    return(out)
   }
 
-  muni <- normalise_muni6(coalesce_muni_code(d[[res_col]], d[[occ_col]]))
+  coalesced <- coalesce_muni_code(d[[res_col]], d[[occ_col]])
+  muni <- normalise_muni6(coalesced)
   year <- as.integer(d[[year_col]])
   out <- data.table::data.table(muni_code = muni, year = year)[
     , .(deaths = .N), by = .(muni_code, year)]
   data.table::set(out, j = "deaths", value = as.integer(out$deaths))
   data.table::setorder(out, muni_code, year)
+  data.table::setattr(out, "n_residence_fallback",
+                      attr(coalesced, "n_fallback"))
   out[]
 }
 
@@ -67,7 +74,8 @@ filter_tb_deaths <- function(sim,
 #'
 #' @param year_start,year_end Inclusive death-year range (from DTOBITO).
 #' @param uf Optional vector of state abbreviations to restrict the pull.
-#' @param icd3 ICD-10 prefixes (defaults to TB_DEATH_ICD3).
+#' @param icd3 ICD-10 prefixes. Defaults to `TB_DEATH_ICD3` from config.R (the
+#'   canonical definition), which must be on the search path.
 load_sim_deaths <- function(year_start, year_end, uf = "all",
                             icd3 = TB_DEATH_ICD3) {
   if (!requireNamespace("microdatasus", quietly = TRUE)) {

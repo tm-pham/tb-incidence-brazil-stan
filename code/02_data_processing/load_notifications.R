@@ -7,17 +7,13 @@
 
 source(here::here("code", "02_data_processing", "geo_utils.R"))
 
-# SINAN-TB "Tipo de Entrada" categories to KEEP.
-# PI decision (2026-06-03): count new cases and relapses only; exclude re-entry
-# after default (re-engaging in care), transfer, post-mortem, and unknown.
-# Recorded in literature/notes/priors.md.
-#
-# IMPORTANT: the *raw coded values* for these categories MUST be confirmed
-# against data/raw/TB_notifications/SINAN_TB_Variable_Dictionary.xlsx before the
-# loader is run. SINAN has used different code sets across versions, so the
-# numeric codes are passed in explicitly (see load_sinan_tb_notifications) rather
-# than hard-coded here. The labels below are the contract.
-SINAN_ENTRY_KEEP_LABELS <- c("Caso novo (new case)", "Recidiva (relapse)")
+# The keep-set of SINAN-TB "Tipo de Entrada" (DBF variable TRATAMENTO) codes is
+# defined canonically as SINAN_ENTRY_KEEP_CODES in config.R (c("1", "2"): new
+# case + relapse). PI decision 2026-06-03, recorded in literature/notes/priors.md.
+# Codes confirmed against SINAN_TB_Variable_Dictionary.xlsx (variable
+# TRATAMENTO): 1=New case, 2=Relapse, 3=Re-entry after abandonment, 4=Unknown,
+# 5=Transfer, 6=Post-mortem (v5). It is passed explicitly to the loader so the
+# inclusion rule is never applied implicitly.
 
 #' Reduce a standardised SINAN-TB frame to treatment-initiation counts.
 #'
@@ -31,13 +27,16 @@ SINAN_ENTRY_KEEP_LABELS <- c("Caso novo (new case)", "Recidiva (relapse)")
 #' values count, so the load-bearing inclusion rule is never applied implicitly.
 #'
 #' @param sinan data.table with the columns named by the *_col args below.
-#' @param keep_entry Vector of raw entry-type values to keep (new + relapse).
-#' @param entry_col Entry-type column (e.g. SINAN `TPENTRADA`/`TIPO_ENTR`).
+#' @param keep_entry Vector of raw entry-type values to keep (new + relapse);
+#'   canonically `SINAN_ENTRY_KEEP_CODES` from config.R.
+#' @param entry_col Entry-type column (e.g. SINAN `TRATAMENTO` after
+#'   `process_sinan_tuberculose`).
 #' @param res_col,occ_col Residence and notification municipality columns
 #'   (e.g. SINAN `ID_MN_RESI`, `ID_MUNICIP`).
 #' @param year_col Integer year column (e.g. derived from `DT_DIAG`).
 #' @return data.table(muni_code, year, notifications), one row per
-#'   municipality-year.
+#'   municipality-year. The number of rows that took the notification fallback
+#'   is attached as the attribute `n_residence_fallback`.
 summarise_notifications <- function(sinan,
                                     keep_entry,
                                     entry_col = "entry_type",
@@ -61,16 +60,21 @@ summarise_notifications <- function(sinan,
   keep <- as.character(sinan[[entry_col]]) %in% as.character(keep_entry)
   d <- sinan[keep]
   if (!nrow(d)) {
-    return(data.table::data.table(muni_code = integer(), year = integer(),
-                                  notifications = integer()))
+    out <- data.table::data.table(muni_code = integer(), year = integer(),
+                                  notifications = integer())
+    data.table::setattr(out, "n_residence_fallback", 0L)
+    return(out)
   }
 
-  muni <- normalise_muni6(coalesce_muni_code(d[[res_col]], d[[occ_col]]))
+  coalesced <- coalesce_muni_code(d[[res_col]], d[[occ_col]])
+  muni <- normalise_muni6(coalesced)
   year <- as.integer(d[[year_col]])
   out <- data.table::data.table(muni_code = muni, year = year)[
     , .(notifications = .N), by = .(muni_code, year)]
   data.table::set(out, j = "notifications", value = as.integer(out$notifications))
   data.table::setorder(out, muni_code, year)
+  data.table::setattr(out, "n_residence_fallback",
+                      attr(coalesced, "n_fallback"))
   out[]
 }
 
@@ -85,10 +89,11 @@ summarise_notifications <- function(sinan,
 #' installed package and the variable dictionary before the first run.
 #'
 #' @param year_start,year_end Inclusive diagnosis-year range (from DT_DIAG).
-#' @param keep_entry Raw entry-type codes for new case + relapse, confirmed from
-#'   the SINAN variable dictionary.
+#' @param keep_entry Raw entry-type codes for new case + relapse. Defaults to
+#'   `SINAN_ENTRY_KEEP_CODES` (c("1", "2"), confirmed from the dictionary).
 #' @param uf Optional vector of state abbreviations to restrict the pull.
-load_sinan_tb_notifications <- function(year_start, year_end, keep_entry,
+load_sinan_tb_notifications <- function(year_start, year_end,
+                                        keep_entry = SINAN_ENTRY_KEEP_CODES,
                                         uf = "all") {
   if (!requireNamespace("microdatasus", quietly = TRUE)) {
     stop("load_sinan_tb_notifications: package 'microdatasus' is required ",
@@ -100,10 +105,11 @@ load_sinan_tb_notifications <- function(year_start, year_end, keep_entry,
   )
   raw <- microdatasus::process_sinan_tuberculose(raw)
   raw <- data.table::as.data.table(raw)
-  # Standardise to the columns summarise_notifications() expects. Confirm these
-  # source names against the dictionary (TPENTRADA vs TIPO_ENTR, etc.).
+  # Standardise to the columns summarise_notifications() expects. Source names
+  # confirmed against the dictionary: TRATAMENTO (Tipo de Entrada), ID_MN_RESI
+  # (residence), ID_MUNICIP (notification), DT_DIAG (diagnosis date).
   sinan <- data.table::data.table(
-    entry_type = raw$TPENTRADA,
+    entry_type = as.character(raw$TRATAMENTO),
     muni_res   = raw$ID_MN_RESI,
     muni_occ   = raw$ID_MUNICIP,
     year       = as.integer(format(as.Date(raw$DT_DIAG), "%Y"))

@@ -36,7 +36,11 @@ normalise_muni6 <- function(x) {
 #'
 #' @param residence,occurrence Equal-length vectors of municipality codes.
 #' @return A character vector of the chosen codes (not yet normalised). Errors
-#'   if any row has neither a valid residence nor a valid occurrence code.
+#'   if any row has neither a valid residence nor a valid occurrence code. The
+#'   number of rows that fell back to occurrence is attached as the attribute
+#'   `n_fallback` (and `n_total`) so callers can surface the fallback rate:
+#'   occurrence is biased toward referral centres, so a high fallback rate
+#'   signals numerator/denominator (residence) misalignment.
 coalesce_muni_code <- function(residence, occurrence) {
   if (length(residence) != length(occurrence)) {
     stop("coalesce_muni_code: residence and occurrence must be equal length.")
@@ -54,5 +58,8 @@ coalesce_muni_code <- function(residence, occurrence) {
     stop("coalesce_muni_code: ", n, " row(s) have neither a valid residence ",
          "nor a valid occurrence municipality code.")
   }
+  used_fallback <- !r$ok & o$ok
+  attr(out, "n_fallback") <- sum(used_fallback)
+  attr(out, "n_total") <- length(out)
   out
 }

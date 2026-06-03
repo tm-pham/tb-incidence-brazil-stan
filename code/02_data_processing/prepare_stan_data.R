@@ -22,7 +22,10 @@ source(here::here("code", "02_data_processing", "geo_utils.R"))
 # --- Internal validation helpers -------------------------------------------
 
 .is_count <- function(x) {
-  is.numeric(x) && all(!is.na(x)) && all(x >= 0) && all(x == as.integer(x))
+  # isTRUE guards the > .Machine$integer.max case, where as.integer(x) is NA and
+  # the comparison would otherwise return NA instead of FALSE.
+  is.numeric(x) && all(is.finite(x)) && isTRUE(all(x >= 0)) &&
+    isTRUE(all(x == suppressWarnings(as.integer(x))))
 }
 
 .require_cols <- function(dt, cols, what) {
@@ -53,7 +56,9 @@ source(here::here("code", "02_data_processing", "geo_utils.R"))
 #'   an error.
 #' @return A list with the Stan data (`N`, `n_areas`, `n_years`, integer
 #'   `area`/`year` indices, `notifications`, `deaths`, `population`, and
-#'   `log_pop_offset` = log(population)), plus a `key` mapping indices to codes
+#'   `log_pop_offset` = log(population)). With annual data the offset is log
+#'   person-YEARS (population x 1 year); a monthly extension (Chitwood 2025) must
+#'   rescale to person-months. Plus a `key` mapping indices to codes
 #'   and a `report` of what was filled or coerced.
 prepare_stan_data <- function(notifications, deaths, population,
                               covariates = NULL,
@@ -89,6 +94,11 @@ prepare_stan_data <- function(notifications, deaths, population,
   }
 
   # --- Validate the population universe (the denominator) ------------------
+  if (!nrow(pop)) {
+    stop("prepare_stan_data: the population universe is empty",
+         if (!is.null(year_range)) " after the year_range filter" else "",
+         "; nothing to assemble.")
+  }
   if (anyNA(pop$population)) {
     stop("prepare_stan_data: population has NA values; every (municipality, ",
          "year) in the universe needs a denominator.")
@@ -139,6 +149,9 @@ prepare_stan_data <- function(notifications, deaths, population,
   dt <- notif_c[pop, on = c("muni_code", "year")]
   dt <- dth_c[dt, on = c("muni_code", "year")]
   data.table::setorder(dt, muni_code, year)
+  # The join must not change the universe row count (counts are deduped above and
+  # the population universe is unique); fail loudly if a future change breaks it.
+  stopifnot(nrow(dt) == nrow(pop))
 
   n_notif_filled <- sum(is.na(dt$notifications))
   n_death_filled <- sum(is.na(dt$deaths))
@@ -179,6 +192,12 @@ prepare_stan_data <- function(notifications, deaths, population,
            "cell(s), e.g. muni ", gaps$muni_code[1L], ". Fill before fitting.")
     }
     data.table::setorder(merged, muni_code, year)
+    # X feeds phi.X and omega.X row-for-row with the count vectors taken from dt
+    # (also ordered by muni_code, year). Assert the two orderings are identical
+    # so a covariate can never be silently attached to the wrong cell.
+    stopifnot(nrow(merged) == nrow(dt),
+              identical(merged$muni_code, dt$muni_code),
+              identical(merged$year, dt$year))
     X <- as.matrix(merged[, cov_cols, with = FALSE])
   }
 

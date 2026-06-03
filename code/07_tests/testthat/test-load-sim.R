@@ -19,16 +19,19 @@ test_that("filter_tb_deaths keeps only A15-A19 underlying causes", {
 
 test_that("filter_tb_deaths attributes to residence with occurrence fallback", {
   sim <- data.table(
-    cause    = c("A150", "A150", "A150"),
-    muni_res = c("355030", "", NA),          # row 2 blank, row 3 NA -> fallback
-    muni_occ = c("330455", "330455", "330455"),
-    year     = c(2019L, 2019L, 2019L)
+    cause    = c("A150", "A150", "A150", "A150"),
+    # row 2 blank, row 3 NA, row 4 all-nines sentinel -> all fall back.
+    muni_res = c("355030", "", NA, "999999"),
+    muni_occ = c("330455", "330455", "330455", "330455"),
+    year     = c(2019L, 2019L, 2019L, 2019L)
   )
   out <- filter_tb_deaths(sim)
-  # Row 1 -> residence 355030; rows 2 and 3 -> occurrence 330455.
+  # Row 1 -> residence 355030; rows 2-4 -> occurrence 330455.
   expect_setequal(out$muni_code, c(355030L, 330455L))
-  expect_equal(out[muni_code == 330455L, deaths], 2L)
+  expect_equal(out[muni_code == 330455L, deaths], 3L)
   expect_equal(out[muni_code == 355030L, deaths], 1L)
+  # The residence-fallback count is surfaced for the orchestration report.
+  expect_equal(attr(out, "n_residence_fallback"), 3L)
 })
 
 test_that("filter_tb_deaths aggregates to municipality-year and 6-digit key", {

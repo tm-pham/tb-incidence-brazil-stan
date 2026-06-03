@@ -104,3 +104,50 @@ test_that("covariates must cover the universe", {
   expect_equal(nrow(out$X), out$N)
   expect_equal(colnames(out$X), "fhs")
 })
+
+test_that("X rows carry the covariate of the area they are aligned to", {
+  pop <- make_pop()
+  notif <- data.table(muni_code = 3550308L, year = 2018L, notifications = 1L)
+  dth <- data.table(muni_code = integer(), year = integer(), deaths = integer())
+  cov <- data.table(muni_code = c(355030L, 330455L, 530010L),
+                    fhs = c(-1.0, 0.0, 1.0))
+  out <- prepare_stan_data(notif, dth, pop, covariates = cov)
+  # For each row, X's fhs must equal the covariate for that row's muni_code.
+  lookup <- setNames(cov$fhs, as.character(cov$muni_code))
+  expect_equal(as.numeric(out$X[, "fhs"]),
+               unname(lookup[as.character(out$key$muni_code)]))
+})
+
+test_that("year-varying covariates join on muni_code AND year", {
+  pop <- make_pop()  # 3 munis x 2 years
+  notif <- data.table(muni_code = 3550308L, year = 2018L, notifications = 1L)
+  dth <- data.table(muni_code = integer(), year = integer(), deaths = integer())
+  munis <- c(355030L, 330455L, 530010L)
+  cov_full <- CJ(muni_code = munis, year = c(2018L, 2019L))[
+    , fhs := seq_len(.N) / 10][]
+  out <- prepare_stan_data(notif, dth, pop, covariates = cov_full)
+  expect_equal(nrow(out$X), out$N)
+  # Drop one (muni, year) cell -> the by-year gap check must fire.
+  cov_gap <- cov_full[!(muni_code == 530010L & year == 2019L)]
+  expect_error(prepare_stan_data(notif, dth, pop, covariates = cov_gap),
+               "covariates miss")
+})
+
+test_that("prepare_stan_data sums duplicate count rows for the same cell", {
+  pop <- make_pop()
+  notif <- data.table(muni_code = c(3550308L, 3550308L), year = c(2018L, 2018L),
+                      notifications = c(30L, 20L))
+  dth <- data.table(muni_code = integer(), year = integer(), deaths = integer())
+  out <- prepare_stan_data(notif, dth, pop)
+  idx <- out$key[muni_code == 355030L & year == 2018L, area_idx]
+  cell <- out$key[muni_code == 355030L & year == 2018L, notifications]
+  expect_equal(cell, 50L)
+  expect_equal(sum(out$notifications), 50L)
+})
+
+test_that("prepare_stan_data reports a clean error on integer overflow", {
+  pop <- make_pop()
+  notif <- data.table(muni_code = 3550308L, year = 2018L, notifications = 3e9)
+  dth <- data.table(muni_code = integer(), year = integer(), deaths = integer())
+  expect_error(prepare_stan_data(notif, dth, pop), "non-negative integers")
+})

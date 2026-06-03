@@ -35,6 +35,30 @@ STAN_DIR <- here::here("code", "03_modeling", "stan")
 
 GLOBAL_SEED <- 20240603L
 
+# --- Data definitions (load-bearing; see literature/notes/priors.md) ---------
+# The canonical, single-source-of-truth definitions of what is counted. The
+# orchestration script passes these explicitly to the loaders so the inclusion
+# rules are never implicit. Changing them changes the estimand; do not edit
+# without updating priors.md and re-running /review.
+
+# TB death = underlying cause ICD-10 A15-A19 only (active TB; excludes B90
+# sequelae). PI decision 2026-06-03.
+TB_DEATH_ICD3 <- c("A15", "A16", "A17", "A18", "A19")
+
+# SINAN notification numerator = TRATAMENTO (Tipo de Entrada) new case (1) +
+# relapse (2) only; excludes re-entry/unknown/transfer/post-mortem. Version-safe
+# across SINAN v4/v5. PI decision 2026-06-03.
+SINAN_ENTRY_KEEP_CODES <- c("1", "2")
+
+# --- Analysis window defaults -----------------------------------------------
+# Default to a pre-COVID-stable window. The 2020-2021 disruption
+# (chitwood2025) must be handled explicitly before extending across it. The
+# orchestration script reads env vars TB_YEAR_START/TB_YEAR_END/TB_UF and falls
+# back to these.
+YEAR_START_DEFAULT <- 2015L
+YEAR_END_DEFAULT   <- 2019L
+UF_DEFAULT         <- "all"
+
 # --- Parallelism ------------------------------------------------------------
 # Intended core count: all but one locally; the cluster sbatch template
 # overrides this. The actual options(mc.cores = ) / setDTthreads() side effect
