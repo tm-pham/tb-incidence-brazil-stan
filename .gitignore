@@ -1,0 +1,40 @@
+# R
+.Rhistory
+.Rapp.history
+.RData
+.Ruserdata
+.Rproj.user/
+*.Rproj
+.Renviron
+
+# RStudio / IDE
+.vscode/
+*.code-workspace
+
+# Stan / cmdstanr / rstan compiled artifacts
+*.o
+*.so
+*.dll
+*.exe
+*.stanc
+*.hpp
+# Compiled Stan model executables (no extension, sit next to the .stan file)
+# Add specific paths here if needed, e.g.:
+# stan/model
+
+# Fitted model objects & large outputs (often too big for git)
+*.rds
+output/
+results/
+figures/
+*.csv.gz
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Temp / logs
+*.log
+*.tmp
+tmp/
