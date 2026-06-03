@@ -1,5 +1,6 @@
-# Tests for the SINAN notification transform. Synthetic frames only; the DATASUS
-# fetch wrapper load_sinan_tb_notifications() is side-effecting and not tested.
+# Tests for the SINAN notification transforms. Synthetic frames only; the
+# file-reading wrapper load_sinan_tb_notifications() is side-effecting and not
+# tested here (it reads the local SINAN-TB export).
 
 library(data.table)
 source(here::here("code", "02_data_processing", "load_notifications.R"))
@@ -7,6 +8,41 @@ source(here::here("code", "02_data_processing", "load_notifications.R"))
 # SINAN TRATAMENTO codes (per the dictionary): 1 = new case, 2 = relapse,
 # 3 = re-entry after abandonment, 4 = unknown, 5 = transfer, 6 = post-mortem (v5).
 KEEP <- c("1", "2")
+
+test_that("sinan_year extracts the year from SINAN and ISO dates and Dates", {
+  expect_equal(sinan_year(c("20150321", "20191130")), c(2015L, 2019L))
+  expect_equal(sinan_year(c("2015-03-21", "2019-11-30")), c(2015L, 2019L))
+  expect_equal(sinan_year(as.Date(c("2015-03-21", "2019-11-30"))),
+               c(2015L, 2019L))
+})
+
+test_that("standardise_sinan_tb maps dictionary columns to the contract", {
+  raw <- data.table(TRATAMENTO = c("1", "2"),
+                    ID_MN_RESI = c("355030", "330455"),
+                    ID_MUNICIP = c("355030", "330455"),
+                    DT_DIAG    = c("20180101", "20180202"),
+                    other_col  = c("x", "y"))
+  s <- standardise_sinan_tb(raw)
+  expect_named(s, c("entry_type", "muni_res", "muni_occ", "year"))
+  expect_equal(s$entry_type, c("1", "2"))
+  expect_equal(s$year, c(2018L, 2018L))
+})
+
+test_that("standardise_sinan_tb errors when dictionary columns are missing", {
+  expect_error(standardise_sinan_tb(data.table(foo = 1L)),
+               "missing column")
+})
+
+test_that("standardise_sinan_tb feeds summarise_notifications end to end", {
+  raw <- data.table(TRATAMENTO = c("1", "2", "3", "6"),
+                    ID_MN_RESI = rep("3550308", 4),
+                    ID_MUNICIP = rep("3550308", 4),
+                    DT_DIAG    = rep("20180101", 4))
+  out <- summarise_notifications(standardise_sinan_tb(raw), keep_entry = KEEP)
+  # new + relapse counted (2); re-entry and post-mortem dropped.
+  expect_equal(sum(out$notifications), 2L)
+  expect_equal(out$muni_code, 355030L)
+})
 
 test_that("summarise_notifications keeps only the requested entry types", {
   sinan <- data.table(

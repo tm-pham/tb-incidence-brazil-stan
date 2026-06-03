@@ -80,6 +80,11 @@ estimand. Encoded in `code/02_data_processing/`; do not change silently.
   only as a contributory cause are intentionally not counted. (Flag for PI
   re-confirmation: is underlying-cause-only intended, or should contributory
   A15-A19 also count? A sensitivity analysis may be warranted.)
+- **Notification source (SINAN-TB).** SINAN-TB is NOT available through
+  `microdatasus::fetch_datasus()` (it serves only a few SINAN systems, none of
+  them TB), so notifications are read from the PI's local export in
+  `data/raw/TB_notifications/` (`.dbc`/`.dbf`/`.csv`/`.rds`), not pulled over the
+  network. Only SIM (mortality) and IBGE (population) come from DATASUS/IBGE.
 - **Notification numerator (SINAN).** Count new cases + relapses only; exclude
   re-entry after default (re-engaging in care), transfer, and post-mortem.
   Encoded as the `keep_entry` argument to `summarise_notifications()`. Confirmed

@@ -3,6 +3,12 @@
 Builds the municipality-by-year Stan data list (notifications, deaths, and the
 IBGE person-time offset) from SINAN, SIM, and IBGE.
 
+**Sources.** SINAN-TB notifications are read from the PI's local export in
+`data/raw/TB_notifications/` (`.dbc`/`.dbf`/`.csv`/`.rds`) -- SINAN-TB is not
+served by `microdatasus`. SIM mortality is fetched from DATASUS (via
+`microdatasus`) and IBGE population from SIDRA (via `sidrar`). So a run needs the
+notification export present locally **plus** network access for SIM and IBGE.
+
 ## Two kinds of file here
 
 - **Function libraries** (no number prefix): side-effect-free, sourced not run.

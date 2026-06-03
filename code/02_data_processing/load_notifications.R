@@ -29,8 +29,8 @@ source(here::here("code", "02_data_processing", "geo_utils.R"))
 #' @param sinan data.table with the columns named by the *_col args below.
 #' @param keep_entry Vector of raw entry-type values to keep (new + relapse);
 #'   canonically `SINAN_ENTRY_KEEP_CODES` from config.R.
-#' @param entry_col Entry-type column (e.g. SINAN `TRATAMENTO` after
-#'   `process_sinan_tuberculose`).
+#' @param entry_col Entry-type column (the standardised `entry_type`, from SINAN
+#'   `TRATAMENTO`).
 #' @param res_col,occ_col Residence and notification municipality columns
 #'   (e.g. SINAN `ID_MN_RESI`, `ID_MUNICIP`).
 #' @param year_col Integer year column (e.g. derived from `DT_DIAG`).
@@ -78,41 +78,112 @@ summarise_notifications <- function(sinan,
   out[]
 }
 
-# --- DATASUS fetch wrapper (side-effecting; runs on the Mac/cluster) --------
+# --- Standardise a raw SINAN-TB export (pure) -------------------------------
+# SINAN-TB is NOT available through microdatasus::fetch_datasus() (only a few
+# SINAN systems are), so notifications come from the local export downloaded
+# into data/raw/TB_notifications/, not from a network pull. These helpers turn
+# the raw dictionary columns into the contract summarise_notifications() expects.
 
-#' Fetch SINAN-TB notifications from DATASUS and return treatment-initiation
+#' Extract the calendar year from a SINAN date column.
+#'
+#' Handles `Date` values and character dates that begin with the four-digit year
+#' (raw SINAN `YYYYMMDD`, or ISO `YYYY-MM-DD`).
+#'
+#' @param x A `Date` or character vector.
+#' @return An integer vector of years.
+sinan_year <- function(x) {
+  if (inherits(x, "Date")) return(as.integer(format(x, "%Y")))
+  s <- trimws(as.character(x))
+  suppressWarnings(as.integer(substr(s, 1L, 4L)))
+}
+
+#' Map raw SINAN-TB dictionary columns to the standardised frame.
+#'
+#' Pure: no I/O. Column names match `SINAN_TB_Variable_Dictionary.xlsx`:
+#' `TRATAMENTO` (Tipo de Entrada), `ID_MN_RESI` (residence), `ID_MUNICIP`
+#' (notification), `DT_DIAG` (diagnosis date).
+#'
+#' @param raw A data.frame/data.table of raw SINAN-TB records.
+#' @param entry_col,res_col,occ_col,date_col Source column names.
+#' @return data.table(entry_type, muni_res, muni_occ, year).
+standardise_sinan_tb <- function(raw,
+                                 entry_col = "TRATAMENTO",
+                                 res_col = "ID_MN_RESI",
+                                 occ_col = "ID_MUNICIP",
+                                 date_col = "DT_DIAG") {
+  raw <- data.table::as.data.table(raw)
+  miss <- setdiff(c(entry_col, res_col, occ_col, date_col), names(raw))
+  if (length(miss)) {
+    stop("standardise_sinan_tb: missing column(s): ",
+         paste(miss, collapse = ", "),
+         ". Confirm the export matches the SINAN-TB variable dictionary.")
+  }
+  data.table::data.table(
+    entry_type = as.character(raw[[entry_col]]),
+    muni_res   = raw[[res_col]],
+    muni_occ   = raw[[occ_col]],
+    year       = sinan_year(raw[[date_col]])
+  )
+}
+
+# --- Local-file loader (side-effecting; runs where the export lives) --------
+
+#' Read a single SINAN-TB export file by extension.
+#'
+#' Supports `.rds`, `.csv`/`.csv.gz`, `.dbf` (via `foreign`), and `.dbc` (the
+#' native DATASUS compressed format, via `read.dbc`). Returns a data.table with
+#' the raw dictionary column names preserved.
+read_sinan_file <- function(file) {
+  ext <- tolower(tools::file_ext(file))
+  raw <- switch(
+    ext,
+    rds = readRDS(file),
+    csv = data.table::fread(file),
+    gz  = data.table::fread(file),
+    dbf = {
+      if (!requireNamespace("foreign", quietly = TRUE)) {
+        stop("read_sinan_file: reading .dbf needs the 'foreign' package.")
+      }
+      foreign::read.dbf(file, as.is = TRUE)
+    },
+    dbc = {
+      if (!requireNamespace("read.dbc", quietly = TRUE)) {
+        stop("read_sinan_file: reading .dbc needs the 'read.dbc' package ",
+             "(install.packages('read.dbc')).")
+      }
+      read.dbc::read.dbc(file)
+    },
+    stop("read_sinan_file: unsupported file type '", ext, "': ", file)
+  )
+  data.table::as.data.table(raw)
+}
+
+#' Read local SINAN-TB notification file(s) and return treatment-initiation
 #' counts by municipality-year.
 #'
-#' Side-effecting (network + microdatasus). Not exercised by unit tests; the
-#' testable logic lives in summarise_notifications(). Confirm the microdatasus
-#' API, the entry-type column name, and the codes in `keep_entry` against the
-#' installed package and the variable dictionary before the first run.
+#' Side-effecting (reads files). The testable logic lives in
+#' `standardise_sinan_tb()` and `summarise_notifications()`. SINAN-TB is the only
+#' source NOT pulled over the network; supply the PI's export from
+#' data/raw/TB_notifications/.
 #'
-#' @param year_start,year_end Inclusive diagnosis-year range (from DT_DIAG).
+#' @param files A directory (all matching files inside are read and row-bound,
+#'   e.g. one per year) or a character vector of file paths.
 #' @param keep_entry Raw entry-type codes for new case + relapse. Defaults to
 #'   `SINAN_ENTRY_KEEP_CODES` (c("1", "2"), confirmed from the dictionary).
-#' @param uf Optional vector of state abbreviations to restrict the pull.
-load_sinan_tb_notifications <- function(year_start, year_end,
+#' @param pattern File-name pattern used when `files` is a directory.
+load_sinan_tb_notifications <- function(files,
                                         keep_entry = SINAN_ENTRY_KEEP_CODES,
-                                        uf = "all") {
-  if (!requireNamespace("microdatasus", quietly = TRUE)) {
-    stop("load_sinan_tb_notifications: package 'microdatasus' is required ",
-         "(run on a machine with DATASUS access).")
+                                        pattern = "[.](rds|csv|csv\\.gz|dbf|dbc)$") {
+  if (length(files) == 1L && dir.exists(files)) {
+    files <- list.files(files, pattern = pattern, full.names = TRUE,
+                        ignore.case = TRUE)
   }
-  raw <- microdatasus::fetch_datasus(
-    year_start = year_start, year_end = year_end, uf = uf,
-    information_system = "SINAN-TUBERCULOSE"
-  )
-  raw <- microdatasus::process_sinan_tuberculose(raw)
-  raw <- data.table::as.data.table(raw)
-  # Standardise to the columns summarise_notifications() expects. Source names
-  # confirmed against the dictionary: TRATAMENTO (Tipo de Entrada), ID_MN_RESI
-  # (residence), ID_MUNICIP (notification), DT_DIAG (diagnosis date).
-  sinan <- data.table::data.table(
-    entry_type = as.character(raw$TRATAMENTO),
-    muni_res   = raw$ID_MN_RESI,
-    muni_occ   = raw$ID_MUNICIP,
-    year       = as.integer(format(as.Date(raw$DT_DIAG), "%Y"))
-  )
+  if (!length(files)) {
+    stop("load_sinan_tb_notifications: no SINAN-TB export file(s) found. ",
+         "Place the notification export in data/raw/TB_notifications/.")
+  }
+  raw <- data.table::rbindlist(lapply(files, read_sinan_file),
+                               use.names = TRUE, fill = TRUE)
+  sinan <- standardise_sinan_tb(raw)
   summarise_notifications(sinan, keep_entry = keep_entry)
 }

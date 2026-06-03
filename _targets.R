@@ -41,16 +41,22 @@ list(
   ),
   tar_target(years, seq.int(year_start, year_end)),
 
-  # --- STEP 1: networked fetch. Raw pulls cached to data/interim/ as the
-  # reproducibility boundary (run once on the Mac/cluster; needs microdatasus +
-  # sidrar). format = "file" makes targets track the cached file.
+  # --- Notifications: LOCAL SINAN-TB export (NOT a network pull; microdatasus
+  # does not serve SINAN-TUBERCULOSE). Track the source file(s) so a new export
+  # re-triggers processing, then cache the standardised counts to data/interim/.
+  tar_target(
+    notification_files,
+    list.files(file.path(DATA_RAW, "TB_notifications"),
+               pattern = "[.](rds|csv|csv\\.gz|dbf|dbc)$",
+               full.names = TRUE, ignore.case = TRUE),
+    format = "file"
+  ),
   tar_target(
     raw_notifications_file,
     {
       dir.create(DATA_INTERIM, recursive = TRUE, showWarnings = FALSE)
-      d <- load_sinan_tb_notifications(year_start, year_end,
-                                       keep_entry = SINAN_ENTRY_KEEP_CODES,
-                                       uf = uf)
+      d <- load_sinan_tb_notifications(notification_files,
+                                       keep_entry = SINAN_ENTRY_KEEP_CODES)
       p <- file.path(DATA_INTERIM, "raw_notifications.rds")
       saveRDS(d, p); p
     },
@@ -58,6 +64,9 @@ list(
   ),
   tar_target(raw_notifications, readRDS(raw_notifications_file)),
 
+  # --- STEP 1 (networked): SIM deaths and IBGE population. Raw pulls cached to
+  # data/interim/ as the reproducibility boundary (run on the Mac/cluster; needs
+  # microdatasus + sidrar). format = "file" makes targets track the cached file.
   tar_target(
     raw_deaths_file,
     {

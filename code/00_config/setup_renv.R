@@ -22,8 +22,9 @@ pkgs <- c(
   "withr",        # scoped RNG state in the simulator
   "ggplot2",      # figures
   "geobr",        # municipality spatial data
-  "microdatasus", # SIM mortality from DATASUS
-  "sidrar"        # IBGE population from SIDRA
+  "microdatasus", # SIM mortality from DATASUS (SINAN-TB is NOT served here)
+  "sidrar",       # IBGE population from SIDRA
+  "read.dbc"      # read the local SINAN-TB .dbc export (foreign reads .dbf)
 )
 
 # cmdstanr is not on CRAN; install from the Stan R-universe.

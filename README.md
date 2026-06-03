@@ -72,11 +72,17 @@ priors.
 ## Running the pipeline
 
 All commands run from the repo root (where `_targets.R` lives). The pipeline is a
-[targets](https://docs.ropensci.org/targets/) DAG: a networked **fetch** step
-that caches the raw SINAN / SIM / IBGE pulls to `data/interim/`, then a
-deterministic **assemble** step that writes the Stan data list to
-`outputs/stan_data/tb_stan_data.rds` with a vintage-stamped report in
-`outputs/logs/`.
+[targets](https://docs.ropensci.org/targets/) DAG: a **prepare** step (read the
+local SINAN-TB notification export, fetch SIM and IBGE) that caches the raw
+tables to `data/interim/`, then a deterministic **assemble** step that writes the
+Stan data list to `outputs/stan_data/tb_stan_data.rds` with a vintage-stamped
+report in `outputs/logs/`.
+
+**Sources.** SINAN-TB notifications are read from a local export placed in
+`data/raw/TB_notifications/` (`.dbc`/`.dbf`/`.csv`/`.rds`) -- SINAN-TB is not
+served by `microdatasus`. SIM mortality is pulled from DATASUS and IBGE
+population from SIDRA, so the prepare step needs both the notification file and
+network access.
 
 ```bash
 make data       # build the Stan data (fetch if needed, then assemble)
