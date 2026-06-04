@@ -1,50 +1,46 @@
-# Tests for the IBGE population transform. Synthetic frames only; the sidrar
-# fetch wrapper load_ibge_population() is side-effecting and not tested here.
+# Tests for the state population transforms. Synthetic frames only; the sidrar
+# fetch wrapper load_ibge_state_population() is side-effecting and not tested.
 
 library(data.table)
 source(here::here("code", "02_data_processing", "load_population.R"))
 
-test_that("tidy_population standardises and validates a clean frame", {
-  raw <- data.table(muni_code = c("3550308", "3304557"),
-                    year = c("2018", "2018"),
-                    population = c("12000000", "6700000"))
-  out <- tidy_population(raw)
-  expect_named(out, c("muni_code", "year", "population"))
-  expect_true(is.integer(out$year) && is.numeric(out$population))
-  expect_equal(out[muni_code == "3550308", population], 12000000)
-  expect_equal(attr(out, "n_dropped_missing"), 0L)
+test_that("tidy_state_population standardises and validates", {
+  raw <- data.table(uf = c("35", "33"), year = c("2018", "2018"),
+                    population = c("45000000", "17000000"))
+  out <- tidy_state_population(raw)
+  expect_named(out, c("uf", "year", "population"))
+  expect_true(is.integer(out$uf) && is.integer(out$year))
+  expect_equal(out[uf == 35L, population], 45000000)
 })
 
-test_that("tidy_population maps non-default column names", {
-  # Mirrors the wrapper renaming SIDRA columns (code/year/value) to the contract.
-  raw <- data.table(cod_muni = "3550308", ano = 2019L, valor = 12100000)
-  out <- tidy_population(raw, code_col = "cod_muni",
-                         year_col = "ano", value_col = "valor")
-  expect_equal(nrow(out), 1L)
-  expect_equal(out$population, 12100000)
+test_that("tidy_state_population rejects missing / non-positive / duplicate", {
+  expect_error(tidy_state_population(
+    data.table(uf = 35L, year = 2018L, population = NA_real_)), "strictly")
+  expect_error(tidy_state_population(
+    data.table(uf = 35L, year = 2018L, population = 0)), "strictly")
+  expect_error(tidy_state_population(
+    data.table(uf = c(35L, 35L), year = c(2018L, 2018L),
+               population = c(1, 2))), "duplicated")
 })
 
-test_that("tidy_population errors on a missing population (no silent drop)", {
-  # A municipality-year with no denominator would silently drop out of the
-  # canonical universe downstream, so it must fail loudly here.
-  raw <- data.table(muni_code = c("3550308", "3304557"),
-                    year = c(2018L, 2018L),
-                    population = c(12000000, NA))
-  expect_error(tidy_population(raw), "NA population")
+test_that("expand_population_monthly fills the full state-month grid", {
+  annual <- data.table(uf = c(35L, 35L, 33L, 33L),
+                       year = c(2018L, 2019L, 2018L, 2019L),
+                       population = c(45e6, 45.5e6, 17e6, 17.1e6))
+  out <- expand_population_monthly(annual, 2018L, 2019L, method = "linear")
+  expect_equal(nrow(out), 2L * 2L * 12L)            # 2 states x 2 years x 12
+  expect_true(all(out$population > 0))
+  # Linear interpolation lies between the annual anchors for SP.
+  sp <- out[uf == 35L]
+  expect_true(all(sp$population >= 45e6 - 1 & sp$population <= 45.5e6 + 1))
+  # Monotone increase across the year for SP (population rising).
+  expect_true(all(diff(sp[order(year, month), population]) >= 0))
 })
 
-test_that("tidy_population rejects non-positive and duplicated cells", {
-  raw_neg <- data.table(muni_code = "3550308", year = 2018L, population = 0)
-  expect_error(tidy_population(raw_neg), "non-positive")
-
-  raw_dup <- data.table(muni_code = c("3550308", "3550308"),
-                        year = c(2018L, 2018L),
-                        population = c(12000000, 12000001))
-  expect_error(tidy_population(raw_dup), "duplicated")
-})
-
-test_that("tidy_population errors on a non-integer year", {
-  raw <- data.table(muni_code = "3550308", year = "twenty-eighteen",
-                    population = 12000000)
-  expect_error(tidy_population(raw), "non-integer year")
+test_that("expand_population_monthly constant method repeats annual values", {
+  annual <- data.table(uf = 35L, year = c(2018L, 2019L),
+                       population = c(45e6, 46e6))
+  out <- expand_population_monthly(annual, 2018L, 2019L, method = "constant")
+  expect_equal(unique(out[year == 2018L, population]), 45e6)
+  expect_equal(unique(out[year == 2019L, population]), 46e6)
 })

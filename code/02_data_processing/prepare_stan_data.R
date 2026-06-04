@@ -1,29 +1,21 @@
 # prepare_stan_data.R
-# Side-effect-free assembly of the municipality-by-year Stan data list from the
-# three processed sources: SINAN notification counts, SIM TB-death counts, and
-# IBGE population (the person-time offset, gamma). No reading or writing here;
-# the orchestration script loads the inputs and writes the output.
+# Side-effect-free assembly of the state-month panel that feeds the per-state
+# Stan models. The model is fit one state at a time, so this builds the full
+# 27 x 252 panel (UF x year x month, 2003-2023) and provides stan_data_for_state()
+# to slice one state's 252-month series. No reading or writing here.
 #
-# Design contract (enforced loudly, per the data_integrity reviewer mandate):
-#   * The IBGE population table defines the canonical municipality-by-year
-#     universe. Every (municipality, year) with a known denominator is kept;
-#     joins never drop a municipality.
-#   * Notifications and deaths are LEFT-joined onto that universe. A cell with
-#     no record means zero events, not missing data, so it is filled with 0 and
-#     the number of fills is reported. NA handling is explicit, never silent.
-#   * A notification or death for a (municipality, year) absent from the
-#     population universe is an error (a code or year mismatch), reported with
-#     the offending keys rather than silently dropped.
-#   * Counts must be non-negative integers; population must be present and
-#     strictly positive. Violations error with the offending rows.
-
-source(here::here("code", "02_data_processing", "geo_utils.R"))
-
-# --- Internal validation helpers -------------------------------------------
+# Contract (enforced loudly, per the data_integrity mandate):
+#   * The canonical universe is the COMPLETE grid uf_codes x years x 12 months.
+#     Population must cover every cell (it is the person-time offset); a missing
+#     denominator is an error, not a silent drop.
+#   * Notifications and deaths are LEFT-joined onto the grid; a cell with no
+#     record is zero (filled and reported), not missing.
+#   * Counts outside the grid (bad UF / year / month) error rather than drop.
+#   * Counts are non-negative integers. Covariates (idc, genexpert_share,
+#     pri_mort_t, pri_aban_t) are joined; cells where they are undefined (e.g. no
+#     notifications) are reported as NA, not silently imputed.
 
 .is_count <- function(x) {
-  # isTRUE guards the > .Machine$integer.max case, where as.integer(x) is NA and
-  # the comparison would otherwise return NA instead of FALSE.
   is.numeric(x) && all(is.finite(x)) && isTRUE(all(x >= 0)) &&
     isTRUE(all(x == suppressWarnings(as.integer(x))))
 }
@@ -31,198 +23,166 @@ source(here::here("code", "02_data_processing", "geo_utils.R"))
 .require_cols <- function(dt, cols, what) {
   miss <- setdiff(cols, names(dt))
   if (length(miss)) {
-    stop(what, ": missing required column(s): ", paste(miss, collapse = ", "),
-         ".")
+    stop(what, ": missing required column(s): ", paste(miss, collapse = ", "), ".")
   }
   invisible(TRUE)
 }
 
-# --- Main assembly ----------------------------------------------------------
-
-#' Assemble the Stan data list from processed counts and population.
+#' Assemble the state-month panel.
 #'
-#' @param notifications data.table with columns `muni_code`, `year`,
-#'   `notifications`.
-#' @param deaths data.table with columns `muni_code`, `year`, `deaths`.
-#' @param population data.table with columns `muni_code`, `year`, `population`.
-#'   This is the canonical universe; population is continuous person-time.
-#' @param covariates Optional data.table keyed by `muni_code` (+ optional
-#'   `year`) of standardised area covariates. If supplied it must cover every
-#'   municipality in the universe; otherwise an error lists the gaps.
-#' @param year_range Optional length-2 integer vector `c(min, max)` to restrict
-#'   the universe before assembly.
-#' @param fill_missing_counts If TRUE (default) count cells with no record are
-#'   filled with 0 and the count of fills is reported; if FALSE such cells are
-#'   an error.
-#' @return A list with the Stan data (`N`, `n_areas`, `n_years`, integer
-#'   `area`/`year` indices, `notifications`, `deaths`, `population`, and
-#'   `log_pop_offset` = log(population)). With annual data the offset is log
-#'   person-YEARS (population x 1 year); a monthly extension (Chitwood 2025) must
-#'   rescale to person-months. Plus a `key` mapping indices to codes
-#'   and a `report` of what was filled or coerced.
+#' @param notifications data.table(uf, year, month, notifications).
+#' @param deaths data.table(uf, year, month, deaths).
+#' @param population data.table(uf, year, month, population) covering the grid.
+#' @param idc Optional data.table(uf, year, month, idc).
+#' @param genexpert Optional data.table(uf, year, month, genexpert_share).
+#' @param treatment Optional data.table(uf, year, month, pri_mort_t, pri_aban_t).
+#' @param year_start,year_end Inclusive year window.
+#' @param uf_codes Integer vector of the 27 UF codes (the canonical states).
+#' @param covid_break_year,covid_break_month The COVID structural break.
+#' @return A list: `panel` (the complete grid with counts, covariates, the
+#'   person-time offset, and time/COVID/season columns), `states`, `n_states`,
+#'   `n_months`, and a `report`.
 prepare_stan_data <- function(notifications, deaths, population,
-                              covariates = NULL,
-                              year_range = NULL,
-                              fill_missing_counts = TRUE) {
+                              idc = NULL, genexpert = NULL, treatment = NULL,
+                              year_start, year_end, uf_codes,
+                              covid_break_year, covid_break_month) {
   for (nm in c("notifications", "deaths", "population")) {
     if (!data.table::is.data.table(get(nm))) {
       stop("prepare_stan_data: `", nm, "` must be a data.table.")
     }
   }
-  .require_cols(notifications, c("muni_code", "year", "notifications"),
-                "notifications")
-  .require_cols(deaths, c("muni_code", "year", "deaths"), "deaths")
-  .require_cols(population, c("muni_code", "year", "population"), "population")
+  .require_cols(notifications, c("uf", "year", "month", "notifications"), "notifications")
+  .require_cols(deaths, c("uf", "year", "month", "deaths"), "deaths")
+  .require_cols(population, c("uf", "year", "month", "population"), "population")
 
-  # Work on copies; never mutate the caller's tables.
+  years <- seq.int(year_start, year_end)
+  n_months <- length(years) * 12L
+
+  # --- Canonical universe: the complete grid -------------------------------
+  grid <- data.table::CJ(uf = sort(uf_codes), year = years, month = 1:12)
+  data.table::setkey(grid, uf, year, month)
+
+  # --- Population must cover every cell, be unique and positive ------------
   pop <- data.table::copy(population)
-  notif <- data.table::copy(notifications)
-  dth <- data.table::copy(deaths)
-
-  # Normalise keys to the common 6-digit code and integer year.
-  for (d in list(pop, notif, dth)) {
-    data.table::set(d, j = "muni_code", value = normalise_muni6(d$muni_code))
-    data.table::set(d, j = "year", value = as.integer(d$year))
+  pop <- pop[year >= year_start & year <= year_end]
+  if (anyNA(pop$population) || any(pop$population <= 0)) {
+    stop("prepare_stan_data: population must be present and strictly positive.")
+  }
+  if (nrow(pop[, .N, by = .(uf, year, month)][N > 1L])) {
+    stop("prepare_stan_data: population has duplicated (uf, year, month) cells.")
+  }
+  missing_pop <- pop[grid, on = c("uf", "year", "month")][is.na(population)]
+  if (nrow(missing_pop)) {
+    stop("prepare_stan_data: ", nrow(missing_pop), " grid cell(s) have no ",
+         "population denominator, e.g. uf ", missing_pop$uf[1L], " ",
+         missing_pop$year[1L], "-", missing_pop$month[1L], ".")
   }
 
-  if (!is.null(year_range)) {
-    if (length(year_range) != 2L) stop("year_range must be length 2.")
-    yr <- as.integer(year_range)
-    pop <- pop[year >= yr[1L] & year <= yr[2L]]
-    notif <- notif[year >= yr[1L] & year <= yr[2L]]
-    dth <- dth[year >= yr[1L] & year <= yr[2L]]
-  }
-
-  # --- Validate the population universe (the denominator) ------------------
-  if (!nrow(pop)) {
-    stop("prepare_stan_data: the population universe is empty",
-         if (!is.null(year_range)) " after the year_range filter" else "",
-         "; nothing to assemble.")
-  }
-  if (anyNA(pop$population)) {
-    stop("prepare_stan_data: population has NA values; every (municipality, ",
-         "year) in the universe needs a denominator.")
-  }
-  if (any(pop$population <= 0)) {
-    bad <- pop[population <= 0]
-    stop("prepare_stan_data: population must be strictly positive; ",
-         nrow(bad), " offending row(s), e.g. muni ", bad$muni_code[1L],
-         " year ", bad$year[1L], ".")
-  }
-  dup <- pop[, .N, by = .(muni_code, year)][N > 1L]
-  if (nrow(dup)) {
-    stop("prepare_stan_data: population has ", nrow(dup), " duplicated ",
-         "(municipality, year) cell(s); the universe must be unique.")
-  }
-
-  data.table::setkey(pop, muni_code, year)
-
-  # --- Orphan check: counts must live inside the population universe -------
-  univ <- pop[, .(muni_code, year)]
+  # --- Orphan check + count validation -------------------------------------
   check_orphans <- function(d, what) {
     if (!nrow(d)) return(invisible(TRUE))
-    keys <- unique(d[, .(muni_code, year)])
-    orph <- keys[!univ, on = c("muni_code", "year")]
+    keys <- unique(d[, .(uf, year, month)])
+    orph <- keys[!grid, on = c("uf", "year", "month")]
     if (nrow(orph)) {
-      stop("prepare_stan_data: ", nrow(orph), " ", what, " (municipality, ",
-           "year) cell(s) are absent from the population universe (code or ",
-           "year mismatch), e.g. muni ", orph$muni_code[1L], " year ",
-           orph$year[1L], ". Resolve rather than drop.")
+      stop("prepare_stan_data: ", nrow(orph), " ", what, " cell(s) outside the ",
+           "grid (bad uf/year/month), e.g. uf ", orph$uf[1L], " ",
+           orph$year[1L], "-", orph$month[1L], ".")
     }
-    invisible(TRUE)
   }
-  check_orphans(notif, "notification")
-  check_orphans(dth, "death")
+  notif_c <- notifications[year >= year_start & year <= year_end][
+    , .(notifications = sum(notifications)), by = .(uf, year, month)]
+  death_c <- deaths[year >= year_start & year <= year_end][
+    , .(deaths = sum(deaths)), by = .(uf, year, month)]
+  check_orphans(notif_c, "notification")
+  check_orphans(death_c, "death")
+  if (!.is_count(notif_c$notifications)) stop("prepare_stan_data: notifications must be non-negative integers.")
+  if (!.is_count(death_c$deaths)) stop("prepare_stan_data: deaths must be non-negative integers.")
 
-  # Collapse counts to one row per cell (sum duplicates) and validate.
-  notif_c <- notif[, .(notifications = sum(notifications)),
-                   by = .(muni_code, year)]
-  dth_c <- dth[, .(deaths = sum(deaths)), by = .(muni_code, year)]
-  if (!.is_count(notif_c$notifications)) {
-    stop("prepare_stan_data: notifications must be non-negative integers.")
-  }
-  if (!.is_count(dth_c$deaths)) {
-    stop("prepare_stan_data: deaths must be non-negative integers.")
-  }
-
-  # --- Left-join counts onto the universe; explicit zero-fill --------------
-  dt <- notif_c[pop, on = c("muni_code", "year")]
-  dt <- dth_c[dt, on = c("muni_code", "year")]
-  data.table::setorder(dt, muni_code, year)
-  # The join must not change the universe row count (counts are deduped above and
-  # the population universe is unique); fail loudly if a future change breaks it.
-  stopifnot(nrow(dt) == nrow(pop))
+  # --- Assemble onto the grid ----------------------------------------------
+  dt <- notif_c[grid, on = c("uf", "year", "month")]
+  dt <- death_c[dt, on = c("uf", "year", "month")]
+  dt <- pop[, .(uf, year, month, population)][dt, on = c("uf", "year", "month")]
+  data.table::setorder(dt, uf, year, month)
+  stopifnot(nrow(dt) == nrow(grid))
 
   n_notif_filled <- sum(is.na(dt$notifications))
   n_death_filled <- sum(is.na(dt$deaths))
-  if (!fill_missing_counts && (n_notif_filled || n_death_filled)) {
-    stop("prepare_stan_data: ", n_notif_filled, " notification and ",
-         n_death_filled, " death cell(s) have no record while ",
-         "fill_missing_counts = FALSE.")
-  }
   dt[is.na(notifications), notifications := 0L]
   dt[is.na(deaths), deaths := 0L]
-  data.table::set(dt, j = "notifications",
-                  value = as.integer(dt$notifications))
+  data.table::set(dt, j = "notifications", value = as.integer(dt$notifications))
   data.table::set(dt, j = "deaths", value = as.integer(dt$deaths))
 
-  # --- Integer area/year indices ------------------------------------------
-  areas <- sort(unique(dt$muni_code))
-  years <- sort(unique(dt$year))
-  dt[, area_idx := match(muni_code, areas)]
-  dt[, year_idx := match(year, years)]
-
-  # --- Optional covariates -------------------------------------------------
-  X <- NULL
-  if (!is.null(covariates)) {
-    cov <- data.table::copy(covariates)
-    .require_cols(cov, "muni_code", "covariates")
-    data.table::set(cov, j = "muni_code",
-                    value = normalise_muni6(cov$muni_code))
-    by_year <- "year" %in% names(cov)
-    join_cols <- if (by_year) c("muni_code", "year") else "muni_code"
-    if (by_year) data.table::set(cov, j = "year", value = as.integer(cov$year))
-    cov_cols <- setdiff(names(cov), c("muni_code", "year"))
-    if (!length(cov_cols)) stop("covariates has no covariate columns.")
-    merged <- cov[dt[, c("muni_code", "year", "area_idx", "year_idx"),
-                     with = FALSE], on = join_cols]
-    gaps <- merged[!stats::complete.cases(merged[, cov_cols, with = FALSE])]
-    if (nrow(gaps)) {
-      stop("prepare_stan_data: covariates miss ", nrow(gaps), " universe ",
-           "cell(s), e.g. muni ", gaps$muni_code[1L], ". Fill before fitting.")
-    }
-    data.table::setorder(merged, muni_code, year)
-    # X feeds phi.X and omega.X row-for-row with the count vectors taken from dt
-    # (also ordered by muni_code, year). Assert the two orderings are identical
-    # so a covariate can never be silently attached to the wrong cell.
-    stopifnot(nrow(merged) == nrow(dt),
-              identical(merged$muni_code, dt$muni_code),
-              identical(merged$year, dt$year))
-    X <- as.matrix(merged[, cov_cols, with = FALSE])
+  # --- Covariates (left-joined; undefined cells stay NA and are reported) --
+  join_cov <- function(dt, cov, cols) {
+    if (is.null(cov)) return(dt)
+    cov <- data.table::as.data.table(cov)
+    .require_cols(cov, c("uf", "year", "month", cols), "covariate")
+    cov[dt, on = c("uf", "year", "month")]
   }
+  # NB cov[dt] keeps dt's rows; reorder columns afterwards.
+  if (!is.null(idc))       dt <- merge(dt, idc[, .(uf, year, month, idc)], by = c("uf","year","month"), all.x = TRUE, sort = FALSE)
+  if (!is.null(genexpert)) dt <- merge(dt, genexpert[, .(uf, year, month, genexpert_share)], by = c("uf","year","month"), all.x = TRUE, sort = FALSE)
+  if (!is.null(treatment)) dt <- merge(dt, treatment[, .(uf, year, month, pri_mort_t, pri_aban_t)], by = c("uf","year","month"), all.x = TRUE, sort = FALSE)
+  data.table::setorder(dt, uf, year, month)
+
+  # --- Time / COVID / seasonal columns -------------------------------------
+  dt[, t := (year - year_start) * 12L + month]                 # 1..n_months
+  dt[, month_of_year := month]
+  t_break <- (covid_break_year - year_start) * 12L + covid_break_month
+  dt[, covid_level := as.integer(t >= t_break)]
+  dt[, covid_slope := pmax(t - t_break + 1L, 0L)]
+  dt[, log_pop_offset := log(population)]
 
   report <- list(
-    n_areas = length(areas),
-    n_years = length(years),
+    n_states = data.table::uniqueN(dt$uf),
+    n_months = n_months,
     n_cells = nrow(dt),
     notifications_zero_filled = as.integer(n_notif_filled),
     deaths_zero_filled = as.integer(n_death_filled),
-    year_range = range(years)
+    idc_missing = if ("idc" %in% names(dt)) sum(is.na(dt$idc)) else NA_integer_,
+    genexpert_missing = if ("genexpert_share" %in% names(dt)) sum(is.na(dt$genexpert_share)) else NA_integer_,
+    treatment_missing = if ("pri_mort_t" %in% names(dt)) sum(is.na(dt$pri_mort_t)) else NA_integer_,
+    year_range = c(year_start, year_end)
   )
 
   list(
-    N = nrow(dt),
-    n_areas = length(areas),
-    n_years = length(years),
-    area = dt$area_idx,
-    year = dt$year_idx,
-    notifications = dt$notifications,
-    deaths = dt$deaths,
-    population = dt$population,
-    log_pop_offset = log(dt$population),
-    X = X,
-    key = dt[, .(area_idx, year_idx, muni_code, year, population,
-                 notifications, deaths)],
+    panel = dt[],
+    states = sort(unique(dt$uf)),
+    n_states = data.table::uniqueN(dt$uf),
+    n_months = n_months,
     report = report
   )
+}
+
+#' Slice one state's 252-month series into a per-state Stan data list.
+#'
+#' The model is fit per state, so each fit consumes one of these. Counts and the
+#' offset are always present; covariates may carry NA where undefined (handled in
+#' the modelling stage).
+#'
+#' @param assembled Output of `prepare_stan_data()`.
+#' @param uf One UF code.
+#' @return A list with `N` (months), `uf`, the time/COVID/season vectors, the
+#'   counts, the log person-time offset, and the covariates, ordered by time.
+stan_data_for_state <- function(assembled, uf) {
+  target_uf <- uf
+  d <- data.table::copy(assembled$panel[uf == target_uf])
+  data.table::setorder(d, year, month)
+  if (!nrow(d)) stop("stan_data_for_state: no rows for uf ", target_uf, ".")
+  out <- list(
+    uf = target_uf,
+    N = nrow(d),
+    t = d$t,
+    month_of_year = d$month_of_year,
+    covid_level = d$covid_level,
+    covid_slope = d$covid_slope,
+    notifications = d$notifications,
+    deaths = d$deaths,
+    population = d$population,
+    log_pop_offset = d$log_pop_offset
+  )
+  for (cv in c("idc", "genexpert_share", "pri_mort_t", "pri_aban_t")) {
+    if (cv %in% names(d)) out[[cv]] <- d[[cv]]
+  }
+  out
 }

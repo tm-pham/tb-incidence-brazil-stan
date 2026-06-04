@@ -9,12 +9,13 @@ test_that("_targets.R defines a valid pipeline manifest", {
 
   manifest <- targets::tar_manifest(script = script)
   expect_gt(nrow(manifest), 0)
-  # The data-processing endpoints must be present and the assembly must depend
-  # on all three raw sources.
-  expect_true(all(c("raw_notifications", "raw_deaths", "raw_population",
-                    "stan_data", "stan_data_file") %in% manifest$name))
-  deps <- manifest$command[manifest$name == "stan_data"]
-  expect_match(deps, "raw_notifications")
-  expect_match(deps, "raw_deaths")
-  expect_match(deps, "raw_population")
+  # The state-month endpoints must be present and the assembly must depend on
+  # the notification, TB-death, and population sources.
+  expect_true(all(c("notifications", "tb_deaths", "idc", "genexpert",
+                    "treatment", "population_monthly", "assembled",
+                    "stan_panel_file") %in% manifest$name))
+  deps <- manifest$command[manifest$name == "assembled"]
+  expect_match(deps, "notifications")
+  expect_match(deps, "tb_deaths")
+  expect_match(deps, "population_monthly")
 })
