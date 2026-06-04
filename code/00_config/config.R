@@ -50,14 +50,35 @@ TB_DEATH_ICD3 <- c("A15", "A16", "A17", "A18", "A19")
 # across SINAN v4/v5. PI decision 2026-06-03.
 SINAN_ENTRY_KEEP_CODES <- c("1", "2")
 
-# --- Analysis window defaults -----------------------------------------------
-# Default to a pre-COVID-stable window. The 2020-2021 disruption
-# (chitwood2025) must be handled explicitly before extending across it. The
-# orchestration script reads env vars TB_YEAR_START/TB_YEAR_END/TB_UF and falls
-# back to these.
-YEAR_START_DEFAULT <- 2015L
-YEAR_END_DEFAULT   <- 2019L
+# GeneXpert detection covariate: SINAN variable TEST_MOLEC (Teste Molecular
+# Rapido, TMR-TB). Codes 1=Detectable/Rif-sensitive, 2=Detectable/Rif-resistant,
+# 3=Not detectable, 4=Inconclusive, 5=Not performed. "Diagnosed via GeneXpert"
+# (share-among-notified) = the test was performed, i.e. a result exists (1-4).
+# PI to confirm whether the numerator should instead be detection-positive (1,2).
+SINAN_GENEXPERT_PERFORMED <- c("1", "2", "3", "4")
+
+# Ill-defined causes of death (IDC) for the time-varying death adjustment:
+# ICD-10 Chapter XVIII "causas mal definidas" (R00-R99), matched on the leading
+# letter. PI to confirm the exact garbage-code set.
+IDC_ICD_PREFIX <- "R"
+
+# Study window and grid (state-month, 2003-2023). PI decision 2026-06-04: full
+# 2003-2023 with wide early-year uncertainty (no pre-2008 cut).
+YEAR_START_DEFAULT <- 2003L
+YEAR_END_DEFAULT   <- 2023L
 UF_DEFAULT         <- "all"
+
+# The 27 federative units (states + DF), by 2-digit IBGE code. The canonical
+# state-month grid is UF_CODES x (YEAR_START_DEFAULT..YEAR_END_DEFAULT) x 12.
+UF_CODES <- c(11L, 12L, 13L, 14L, 15L, 16L, 17L,          # North
+              21L, 22L, 23L, 24L, 25L, 26L, 27L, 28L, 29L, # Northeast
+              31L, 32L, 33L, 35L,                          # Southeast
+              41L, 42L, 43L,                               # South
+              50L, 51L, 52L, 53L)                          # Centre-West
+
+# COVID structural break (level + slope change with recovery) at April 2020.
+COVID_BREAK_YEAR  <- 2020L
+COVID_BREAK_MONTH <- 4L
 
 # --- Parallelism ------------------------------------------------------------
 # Intended core count: all but one locally; the cluster sbatch template

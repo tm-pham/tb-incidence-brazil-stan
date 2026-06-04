@@ -32,3 +32,11 @@ test_that("coalesce_muni_code errors on unequal-length inputs", {
   expect_error(coalesce_muni_code(c("355030"), c("355030", "330455")),
                "equal length")
 })
+
+test_that("uf_from_muni takes the 2-digit state code from 6- or 7-digit codes", {
+  expect_equal(uf_from_muni(c("355030", "3304557", "120040")),
+               c(35L, 33L, 12L))
+  expect_equal(uf_from_muni(355030L), 35L)
+  expect_error(uf_from_muni("995030"), "valid UF")   # 99 is not a state
+  expect_error(uf_from_muni(c("355030", NA)), "NA or empty")
+})

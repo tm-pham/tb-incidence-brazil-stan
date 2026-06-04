@@ -1,80 +1,58 @@
-# Tests for the SIM TB-death transform. Synthetic frames only; the DATASUS
-# fetch wrapper load_sim_deaths() is side-effecting and not tested here.
+# Tests for the SIM state-month transforms. Synthetic frames only; the DATASUS
+# fetch wrapper load_sim_records() is side-effecting and not tested here.
 
 library(data.table)
 source(here::here("code", "02_data_processing", "load_sim.R"))
 
-test_that("sim_year reads the year from SIM ddmmyyyy dates and Dates", {
-  # ddmmyyyy: year is the LAST four chars (opposite end from SINAN).
+test_that("sim_year / sim_month read ddmmyyyy (and Date)", {
   expect_equal(sim_year(c("15032018", "01122019")), c(2018L, 2019L))
-  # Robust to a dropped leading zero on the day (7 chars).
-  expect_equal(sim_year("1032018"), 2018L)
-  expect_equal(sim_year(as.Date(c("2018-03-15", "2019-12-01"))),
-               c(2018L, 2019L))
+  expect_equal(sim_month(c("15032018", "01122019")), c(3L, 12L))
+  expect_equal(sim_month("1032018"), 3L)          # dropped leading zero on day
+  expect_equal(sim_year(as.Date("2018-03-15")), 2018L)
+  expect_equal(sim_month(as.Date("2018-03-15")), 3L)
 })
 
-test_that("filter_tb_deaths keeps only A15-A19 underlying causes", {
+test_that("standardise_sim rolls up to state-month with residence fallback", {
   sim <- data.table(
-    cause    = c("A150", "A162", "A199", "B900", "J189", "A179"),
-    muni_res = rep("355030", 6),
-    muni_occ = rep("355030", 6),
-    year     = rep(2018L, 6)
+    cause    = c("A150", "J189", "R99"),
+    muni_res = c("355030", NA, "330455"),         # row 2 -> occurrence fallback
+    muni_occ = c("355030", "355030", "330455"),
+    date     = c("15032018", "20062018", "11112019")
   )
-  out <- filter_tb_deaths(sim)
-  # A150, A162, A199, A179 are TB; B900 (sequelae) and J189 (pneumonia) are not.
-  expect_equal(sum(out$deaths), 4L)
+  recs <- standardise_sim(sim)
+  expect_named(recs, c("cause", "uf", "year", "month"))
+  expect_equal(recs$uf, c(35L, 35L, 33L))          # 355030->35, 330455->33
+  expect_equal(recs$year, c(2018L, 2018L, 2019L))
+  expect_equal(recs$month, c(3L, 6L, 11L))
+  expect_equal(attr(recs, "n_residence_fallback"), 1L)
+})
+
+test_that("filter_tb_deaths keeps only A15-A19 and counts by state-month", {
+  recs <- data.table(
+    cause = c("A150", "A162", "A199", "B900", "J189", "A150"),
+    uf    = c(35L, 35L, 33L, 35L, 35L, 35L),
+    year  = c(2018L, 2018L, 2018L, 2018L, 2018L, 2019L),
+    month = c(3L, 3L, 5L, 3L, 3L, 1L)
+  )
+  out <- filter_tb_deaths(recs)
+  expect_equal(out[uf == 35L & year == 2018L & month == 3L, deaths], 2L)  # A150,A162
+  expect_equal(out[uf == 33L & year == 2018L & month == 5L, deaths], 1L)  # A199
+  expect_equal(out[uf == 35L & year == 2019L & month == 1L, deaths], 1L)
   expect_true(is.integer(out$deaths))
+  expect_false(any(out$year == 2018L & out$month == 3L & out$uf == 35L &
+                     out$deaths == 3L))  # B900/J189 excluded
 })
 
-test_that("filter_tb_deaths attributes to residence with occurrence fallback", {
-  sim <- data.table(
-    cause    = c("A150", "A150", "A150", "A150"),
-    # row 2 blank, row 3 NA, row 4 all-nines sentinel -> all fall back.
-    muni_res = c("355030", "", NA, "999999"),
-    muni_occ = c("330455", "330455", "330455", "330455"),
-    year     = c(2019L, 2019L, 2019L, 2019L)
+test_that("idc_fraction is the ill-defined share of all-cause deaths", {
+  recs <- data.table(
+    cause = c("A150", "R98", "R99", "J189"),   # 2 of 4 are R-codes
+    uf    = rep(35L, 4),
+    year  = rep(2018L, 4),
+    month = rep(3L, 4)
   )
-  out <- filter_tb_deaths(sim)
-  # Row 1 -> residence 355030; rows 2-4 -> occurrence 330455.
-  expect_setequal(out$muni_code, c(355030L, 330455L))
-  expect_equal(out[muni_code == 330455L, deaths], 3L)
-  expect_equal(out[muni_code == 355030L, deaths], 1L)
-  # The residence-fallback count is surfaced for the orchestration report.
-  expect_equal(attr(out, "n_residence_fallback"), 3L)
-})
-
-test_that("filter_tb_deaths aggregates to municipality-year and 6-digit key", {
-  sim <- data.table(
-    cause    = rep("A160", 4),
-    muni_res = c("3550308", "3550308", "3304557", "3550308"),  # 7-digit codes
-    muni_occ = rep("3550308", 4),
-    year     = c(2018L, 2018L, 2018L, 2019L)
-  )
-  out <- filter_tb_deaths(sim)
-  expect_equal(out[muni_code == 355030L & year == 2018L, deaths], 2L)
-  expect_equal(out[muni_code == 355030L & year == 2019L, deaths], 1L)
-  expect_equal(out[muni_code == 330455L & year == 2018L, deaths], 1L)
-  expect_true(all(out$muni_code < 1e6))  # reduced to 6 digits
-})
-
-test_that("filter_tb_deaths drops unattributable rows and counts them", {
-  sim <- data.table(
-    cause    = c("A150", "A150", "A150"),
-    muni_res = c("355030", NA, "999999"),    # rows 2,3 have no residence...
-    muni_occ = c("330455", NA, NA),          # ...and rows 2,3 no occurrence
-    year     = c(2018L, 2018L, 2018L)
-  )
-  out <- filter_tb_deaths(sim)
-  # Only row 1 is placeable; rows 2 and 3 are dropped (not an error).
-  expect_equal(sum(out$deaths), 1L)
-  expect_equal(out$muni_code, 355030L)
-  expect_equal(attr(out, "n_unattributable"), 2L)
-})
-
-test_that("filter_tb_deaths returns an empty typed table when nothing matches", {
-  sim <- data.table(cause = "J189", muni_res = "355030",
-                    muni_occ = "355030", year = 2018L)
-  out <- filter_tb_deaths(sim)
-  expect_equal(nrow(out), 0L)
-  expect_named(out, c("muni_code", "year", "deaths"))
+  out <- idc_fraction(recs)
+  expect_equal(out$n_deaths, 4L)
+  expect_equal(out$n_idc, 2L)
+  expect_equal(out$idc, 0.5)
+  expect_true(out$idc >= 0 && out$idc <= 1)
 })

@@ -1,109 +1,125 @@
 # load_sim.R
-# SIM (mortality) loader: TB deaths as the death-before-treatment route in the
-# identifying model. The pure transform filter_tb_deaths() is side-effect free
-# and tested; load_sim_deaths() is the thin DATASUS fetch wrapper that runs
-# where the network is (the Mac/cluster), not in unit tests.
+# SIM (mortality) loader for the state-month model. One all-cause SIM-DO pull
+# serves both the TB-death counts and the ill-defined-cause (IDC) fraction that
+# drives the time-varying death-reporting adjustment. The pure transforms
+# (standardise_sim, filter_tb_deaths, idc_fraction) are side-effect free and
+# tested; load_sim_records() is the thin DATASUS fetch wrapper.
 
 source(here::here("code", "02_data_processing", "geo_utils.R"))
 
-#' Extract the calendar year from a SIM date column.
-#'
-#' Raw SIM `DTOBITO` is `ddmmyyyy` (day-month-year), so the year is the LAST four
-#' characters (note: the opposite end from SINAN's `YYYYMMDD`). Also handles
-#' `Date` values, in case the column was pre-processed.
-#'
-#' @param x A `Date` or character vector.
-#' @return An integer vector of years.
+# --- Date parsing (raw SIM DTOBITO is ddmmyyyy) -----------------------------
+
+#' Calendar year from a SIM date. Raw `DTOBITO` is ddmmyyyy, so the year is the
+#' LAST four characters; also handles `Date`.
 sim_year <- function(x) {
   if (inherits(x, "Date")) return(as.integer(format(x, "%Y")))
   s <- trimws(as.character(x))
   suppressWarnings(as.integer(substr(s, nchar(s) - 3L, nchar(s))))
 }
 
-#' Reduce a standardised SIM death frame to TB-death counts by municipality-year.
+#' Calendar month (1-12) from a SIM date. ddmmyyyy -> the two characters before
+#' the year (robust to a dropped leading zero on the day); also handles `Date`.
+sim_month <- function(x) {
+  if (inherits(x, "Date")) return(as.integer(format(x, "%m")))
+  s <- trimws(as.character(x))
+  suppressWarnings(as.integer(substr(s, nchar(s) - 5L, nchar(s) - 4L)))
+}
+
+# --- Standardise raw SIM (pure) ---------------------------------------------
+
+#' Standardise a raw SIM-DO frame to all-cause death records keyed by state and
+#' month.
 #'
-#' Pure: no I/O. (1) Keeps rows whose UNDERLYING cause (CAUSABAS) is an active-TB
-#' ICD-10 code; (2) attributes each death to municipality of residence, falling
-#' back to municipality of occurrence when residence is missing; (3) aggregates
-#' to non-negative integer counts on the 6-digit key. One input row is one death.
+#' Pure: no I/O. Attributes each death to the municipality of residence (with an
+#' occurrence fallback) and rolls it up to the state (UF); parses year and month
+#' from `DTOBITO`. Records that can be placed in no municipality are dropped and
+#' counted (`n_unattributable`). One input row is one (all-cause) death.
 #'
-#' SCOPE: only the underlying cause is searched, not the contributory-cause
-#' lines (LINHAA-LINHAD, LINHAII). This matches the PI decision (2026-06-03:
-#' A15-A19 underlying cause only); TB deaths recorded only as a contributory
-#' cause are intentionally not counted. See literature/notes/priors.md.
-#'
-#' @param sim data.table with the columns named by the *_col args below.
-#' @param icd3 Character vector of 3-character ICD-10 prefixes counted as a TB
-#'   death. The canonical list is `TB_DEATH_ICD3` in config.R; the literal
-#'   default here keeps the pure function self-contained for direct/test use.
-#' @param cause_col Underlying-cause column (e.g. SIM `CAUSABAS`).
-#' @param res_col,occ_col Residence and occurrence municipality columns
-#'   (e.g. SIM `CODMUNRES`, `CODMUNOCOR`).
-#' @param year_col Integer year column (e.g. derived from `DTOBITO`).
-#' @return data.table(muni_code, year, deaths), one row per municipality-year.
-#'   The number of rows that took the occurrence fallback is attached as the
-#'   attribute `n_residence_fallback`.
-filter_tb_deaths <- function(sim,
-                             icd3 = c("A15", "A16", "A17", "A18", "A19"),
-                             cause_col = "cause",
-                             res_col = "muni_res",
-                             occ_col = "muni_occ",
-                             year_col = "year") {
-  if (!data.table::is.data.table(sim)) stop("filter_tb_deaths: sim must be a data.table.")
-  need <- c(cause_col, res_col, occ_col, year_col)
-  miss <- setdiff(need, names(sim))
+#' @param sim data.table with the columns named by the *_col args.
+#' @param cause_col,res_col,occ_col,date_col Source columns (SIM `CAUSABAS`,
+#'   `CODMUNRES`, `CODMUNOCOR`, `DTOBITO`).
+#' @return data.table(cause, uf, year, month), one row per death, with
+#'   `n_residence_fallback` and `n_unattributable` attributes.
+standardise_sim <- function(sim,
+                            cause_col = "cause",
+                            res_col = "muni_res",
+                            occ_col = "muni_occ",
+                            date_col = "date") {
+  if (!data.table::is.data.table(sim)) stop("standardise_sim: sim must be a data.table.")
+  miss <- setdiff(c(cause_col, res_col, occ_col, date_col), names(sim))
   if (length(miss)) {
-    stop("filter_tb_deaths: missing column(s): ", paste(miss, collapse = ", "), ".")
+    stop("standardise_sim: missing column(s): ", paste(miss, collapse = ", "), ".")
   }
-
-  causes <- toupper(trimws(as.character(sim[[cause_col]])))
-  keep <- substr(causes, 1L, 3L) %in% icd3
-  d <- sim[keep]
-  if (!nrow(d)) {
-    out <- data.table::data.table(muni_code = integer(), year = integer(),
-                                  deaths = integer())
-    data.table::setattr(out, "n_residence_fallback", 0L)
-    data.table::setattr(out, "n_unattributable", 0L)
-    return(out)
-  }
-
-  coalesced <- coalesce_muni_code(d[[res_col]], d[[occ_col]])
-  year <- as.integer(d[[year_col]])
-  # Drop records that can be placed in no municipality (no valid residence or
-  # occurrence code); the count is surfaced for the processing report.
+  coalesced <- coalesce_muni_code(sim[[res_col]], sim[[occ_col]])
   ok <- !is.na(coalesced)
-  muni <- normalise_muni6(coalesced[ok])
-  out <- data.table::data.table(muni_code = muni, year = year[ok])[
-    , .(deaths = .N), by = .(muni_code, year)]
+  out <- data.table::data.table(
+    cause = toupper(trimws(as.character(sim[[cause_col]])))[ok],
+    uf    = uf_from_muni(coalesced[ok]),
+    year  = sim_year(sim[[date_col]])[ok],
+    month = sim_month(sim[[date_col]])[ok]
+  )
+  data.table::setattr(out, "n_residence_fallback", attr(coalesced, "n_fallback"))
+  data.table::setattr(out, "n_unattributable", attr(coalesced, "n_unattributable"))
+  out[]
+}
+
+# --- State-month aggregates (pure) ------------------------------------------
+
+#' TB-death counts by state-month from standardised all-cause SIM records.
+#'
+#' Keeps deaths whose underlying cause is an active-TB ICD-10 code (A15-A19 by
+#' default; the canonical list is `TB_DEATH_ICD3` in config.R). Underlying cause
+#' only, per the documented decision; see literature/notes/priors.md.
+#'
+#' @param records Output of `standardise_sim()` (cause, uf, year, month).
+#' @param icd3 3-character ICD-10 prefixes counted as a TB death.
+#' @return data.table(uf, year, month, deaths), non-negative integers.
+filter_tb_deaths <- function(records,
+                             icd3 = c("A15", "A16", "A17", "A18", "A19")) {
+  if (!data.table::is.data.table(records)) stop("filter_tb_deaths: records must be a data.table.")
+  d <- records[substr(cause, 1L, 3L) %in% icd3]
+  out <- d[, .(deaths = .N), by = .(uf, year, month)]
   data.table::set(out, j = "deaths", value = as.integer(out$deaths))
-  data.table::setorder(out, muni_code, year)
-  data.table::setattr(out, "n_residence_fallback",
-                      attr(coalesced, "n_fallback"))
-  data.table::setattr(out, "n_unattributable",
-                      attr(coalesced, "n_unattributable"))
+  data.table::setorder(out, uf, year, month)
+  out[]
+}
+
+#' Ill-defined-cause-of-death fraction by state-month.
+#'
+#' The covariate driving the time-varying death-reporting adjustment: the share
+#' of ALL-cause deaths coded to ill-defined causes (ICD-10 Chapter XVIII, R00-R99
+#' by default). Computed from the same all-cause records as the TB deaths.
+#'
+#' @param records Output of `standardise_sim()`.
+#' @param idc_prefix Leading ICD-10 letter(s) for ill-defined causes.
+#' @return data.table(uf, year, month, n_deaths, n_idc, idc), idc in [0,1].
+idc_fraction <- function(records, idc_prefix = "R") {
+  if (!data.table::is.data.table(records)) stop("idc_fraction: records must be a data.table.")
+  pat <- paste0("^(", paste(idc_prefix, collapse = "|"), ")")
+  out <- records[, .(
+    n_deaths = .N,
+    n_idc = sum(grepl(pat, cause))
+  ), by = .(uf, year, month)]
+  out[, idc := n_idc / n_deaths]
+  data.table::setorder(out, uf, year, month)
   out[]
 }
 
 # --- DATASUS fetch wrapper (side-effecting; runs on the Mac/cluster) --------
 
-#' Fetch SIM deaths from DATASUS and return TB-death counts by municipality-year.
+#' Fetch all-cause SIM-DO deaths from DATASUS and standardise to death records.
 #'
-#' Side-effecting (network + microdatasus). Not exercised by unit tests; the
-#' testable logic lives in filter_tb_deaths() and sim_year(). We use the raw
-#' SIM-DO columns directly and deliberately SKIP microdatasus::process_sim():
-#' we need only four fields, and process_sim() decodes many others (it currently
-#' fails with "object 'tabNaturalidade' not found" on some package/data
-#' versions). Raw SIM-DO column names: CAUSABAS (underlying cause), CODMUNRES
-#' (residence), CODMUNOCOR (occurrence), DTOBITO (date of death, ddmmyyyy).
+#' Side-effecting (network + microdatasus). We use the raw SIM-DO columns
+#' directly and SKIP microdatasus::process_sim() (it decodes unused fields and
+#' fails with "object 'tabNaturalidade' not found" on some versions). The pure
+#' aggregators filter_tb_deaths() and idc_fraction() then run on the result.
 #'
 #' @param year_start,year_end Inclusive death-year range (from DTOBITO).
 #' @param uf Optional vector of state abbreviations to restrict the pull.
-#' @param icd3 ICD-10 prefixes. Defaults to `TB_DEATH_ICD3` from config.R (the
-#'   canonical definition), which must be on the search path.
-load_sim_deaths <- function(year_start, year_end, uf = "all",
-                            icd3 = TB_DEATH_ICD3) {
+#' @return data.table of standardised all-cause death records.
+load_sim_records <- function(year_start, year_end, uf = "all") {
   if (!requireNamespace("microdatasus", quietly = TRUE)) {
-    stop("load_sim_deaths: package 'microdatasus' is required (run on a ",
+    stop("load_sim_records: package 'microdatasus' is required (run on a ",
          "machine with DATASUS access).")
   }
   raw <- microdatasus::fetch_datasus(
@@ -111,13 +127,11 @@ load_sim_deaths <- function(year_start, year_end, uf = "all",
     information_system = "SIM-DO"
   )
   raw <- data.table::as.data.table(raw)
-  # Standardise to the columns filter_tb_deaths() expects, from the RAW fetch
-  # (no process_sim). DTOBITO is ddmmyyyy, parsed by sim_year().
   sim <- data.table::data.table(
     cause    = raw$CAUSABAS,
     muni_res = raw$CODMUNRES,
     muni_occ = raw$CODMUNOCOR,
-    year     = sim_year(raw$DTOBITO)
+    date     = raw$DTOBITO
   )
-  filter_tb_deaths(sim, icd3 = icd3)
+  standardise_sim(sim)
 }

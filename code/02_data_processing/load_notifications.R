@@ -1,144 +1,149 @@
 # load_notifications.R
-# SINAN (notifications) loader: treatment initiations as the route out of
-# untreated disease that the model observes. The pure transform
-# summarise_notifications() is side-effect free and tested;
-# load_sinan_tb_notifications() is the thin DATASUS fetch wrapper that runs
-# where the network is.
+# SINAN (notifications) loader for the state-month model. SINAN-TB is NOT served
+# by microdatasus, so records come from the PI's local export. One read serves
+# the notification counts, the treatment-outcome fractions (mortality likelihood),
+# and the GeneXpert share-among-notified (detection covariate). The pure
+# transforms are side-effect free and tested; load_sinan_records() reads files.
 
 source(here::here("code", "02_data_processing", "geo_utils.R"))
 
-# The keep-set of SINAN-TB "Tipo de Entrada" (DBF variable TRATAMENTO) codes is
-# defined canonically as SINAN_ENTRY_KEEP_CODES in config.R (c("1", "2"): new
-# case + relapse). PI decision 2026-06-03, recorded in literature/notes/priors.md.
-# Codes confirmed against SINAN_TB_Variable_Dictionary.xlsx (variable
-# TRATAMENTO): 1=New case, 2=Relapse, 3=Re-entry after abandonment, 4=Unknown,
-# 5=Transfer, 6=Post-mortem (v5). It is passed explicitly to the loader so the
-# inclusion rule is never applied implicitly.
+# --- Date parsing (raw SINAN dates are YYYYMMDD; also handle ISO and Date) ---
 
-#' Reduce a standardised SINAN-TB frame to treatment-initiation counts.
-#'
-#' Pure: no I/O. (1) Keeps rows whose entry type is in `keep_entry`; (2)
-#' attributes each notification to municipality of residence, falling back to
-#' municipality of notification when residence is missing; (3) aggregates to
-#' non-negative integer counts on the 6-digit key. One input row is one
-#' treatment initiation.
-#'
-#' `keep_entry` has no default on purpose: the caller must state which raw entry
-#' values count, so the load-bearing inclusion rule is never applied implicitly.
-#'
-#' @param sinan data.table with the columns named by the *_col args below.
-#' @param keep_entry Vector of raw entry-type values to keep (new + relapse);
-#'   canonically `SINAN_ENTRY_KEEP_CODES` from config.R.
-#' @param entry_col Entry-type column (the standardised `entry_type`, from SINAN
-#'   `TRATAMENTO`).
-#' @param res_col,occ_col Residence and notification municipality columns
-#'   (e.g. SINAN `ID_MN_RESI`, `ID_MUNICIP`).
-#' @param year_col Integer year column (e.g. derived from `DT_DIAG`).
-#' @return data.table(muni_code, year, notifications), one row per
-#'   municipality-year. The number of rows that took the notification fallback
-#'   is attached as the attribute `n_residence_fallback`.
-summarise_notifications <- function(sinan,
-                                    keep_entry,
-                                    entry_col = "entry_type",
-                                    res_col = "muni_res",
-                                    occ_col = "muni_occ",
-                                    year_col = "year") {
-  if (!data.table::is.data.table(sinan)) {
-    stop("summarise_notifications: sinan must be a data.table.")
-  }
-  if (missing(keep_entry) || !length(keep_entry)) {
-    stop("summarise_notifications: keep_entry must list the entry-type values ",
-         "to count (new + relapse); it has no default by design.")
-  }
-  need <- c(entry_col, res_col, occ_col, year_col)
-  miss <- setdiff(need, names(sinan))
-  if (length(miss)) {
-    stop("summarise_notifications: missing column(s): ",
-         paste(miss, collapse = ", "), ".")
-  }
-
-  keep <- as.character(sinan[[entry_col]]) %in% as.character(keep_entry)
-  d <- sinan[keep]
-  if (!nrow(d)) {
-    out <- data.table::data.table(muni_code = integer(), year = integer(),
-                                  notifications = integer())
-    data.table::setattr(out, "n_residence_fallback", 0L)
-    data.table::setattr(out, "n_unattributable", 0L)
-    return(out)
-  }
-
-  coalesced <- coalesce_muni_code(d[[res_col]], d[[occ_col]])
-  year <- as.integer(d[[year_col]])
-  # Drop records that can be placed in no municipality (no valid residence or
-  # notification code); the count is surfaced for the processing report.
-  ok <- !is.na(coalesced)
-  muni <- normalise_muni6(coalesced[ok])
-  out <- data.table::data.table(muni_code = muni, year = year[ok])[
-    , .(notifications = .N), by = .(muni_code, year)]
-  data.table::set(out, j = "notifications", value = as.integer(out$notifications))
-  data.table::setorder(out, muni_code, year)
-  data.table::setattr(out, "n_residence_fallback",
-                      attr(coalesced, "n_fallback"))
-  data.table::setattr(out, "n_unattributable",
-                      attr(coalesced, "n_unattributable"))
-  out[]
-}
-
-# --- Standardise a raw SINAN-TB export (pure) -------------------------------
-# SINAN-TB is NOT available through microdatasus::fetch_datasus() (only a few
-# SINAN systems are), so notifications come from the local export downloaded
-# into data/raw/TB_notifications/, not from a network pull. These helpers turn
-# the raw dictionary columns into the contract summarise_notifications() expects.
-
-#' Extract the calendar year from a SINAN date column.
-#'
-#' Handles `Date` values and character dates that begin with the four-digit year
-#' (raw SINAN `YYYYMMDD`, or ISO `YYYY-MM-DD`).
-#'
-#' @param x A `Date` or character vector.
-#' @return An integer vector of years.
+#' Calendar year from a SINAN date (leading four characters, or `Date`).
 sinan_year <- function(x) {
   if (inherits(x, "Date")) return(as.integer(format(x, "%Y")))
   s <- trimws(as.character(x))
   suppressWarnings(as.integer(substr(s, 1L, 4L)))
 }
 
-#' Map raw SINAN-TB dictionary columns to the standardised frame.
+#' Calendar month (1-12) from a SINAN date. YYYYMMDD -> chars 5-6; ISO
+#' YYYY-MM-DD -> chars 6-7; also handles `Date`.
+sinan_month <- function(x) {
+  if (inherits(x, "Date")) return(as.integer(format(x, "%m")))
+  s <- trimws(as.character(x))
+  iso <- grepl("-", s)
+  suppressWarnings(as.integer(ifelse(iso, substr(s, 6L, 7L), substr(s, 5L, 6L))))
+}
+
+# --- Standardise raw SINAN-TB (pure) ----------------------------------------
+
+#' Standardise a raw SINAN-TB frame to notification records keyed by state and
+#' month, carrying the fields needed for the derived covariates.
 #'
-#' Pure: no I/O. Column names match `SINAN_TB_Variable_Dictionary.xlsx`:
-#' `TRATAMENTO` (Tipo de Entrada), `ID_MN_RESI` (residence), `ID_MUNICIP`
-#' (notification), `DT_DIAG` (diagnosis date).
+#' Pure: no I/O. Attributes each notification to the municipality of residence
+#' (notification fallback) rolled up to the state (UF); parses year and month
+#' from `DT_DIAG`. Carries the entry type (`TRATAMENTO`), closure status
+#' (`SITUA_ENCE`), and rapid molecular test (`TEST_MOLEC`); the latter two are
+#' optional (NA where the column is absent, e.g. TEST_MOLEC pre-GeneXpert).
+#' Records placeable in no municipality are dropped and counted.
 #'
-#' @param raw A data.frame/data.table of raw SINAN-TB records.
-#' @param entry_col,res_col,occ_col,date_col Source column names.
-#' @return data.table(entry_type, muni_res, muni_occ, year).
-standardise_sinan_tb <- function(raw,
+#' @param sinan data.table with the columns named by the *_col args.
+#' @return data.table(entry_type, uf, year, month, situa_ence, test_molec).
+standardise_sinan_tb <- function(sinan,
                                  entry_col = "TRATAMENTO",
                                  res_col = "ID_MN_RESI",
                                  occ_col = "ID_MUNICIP",
-                                 date_col = "DT_DIAG") {
-  raw <- data.table::as.data.table(raw)
-  miss <- setdiff(c(entry_col, res_col, occ_col, date_col), names(raw))
+                                 date_col = "DT_DIAG",
+                                 closure_col = "SITUA_ENCE",
+                                 molec_col = "TEST_MOLEC") {
+  sinan <- data.table::as.data.table(sinan)
+  miss <- setdiff(c(entry_col, res_col, occ_col, date_col), names(sinan))
   if (length(miss)) {
     stop("standardise_sinan_tb: missing column(s): ",
          paste(miss, collapse = ", "),
          ". Confirm the export matches the SINAN-TB variable dictionary.")
   }
-  data.table::data.table(
-    entry_type = as.character(raw[[entry_col]]),
-    muni_res   = raw[[res_col]],
-    muni_occ   = raw[[occ_col]],
-    year       = sinan_year(raw[[date_col]])
+  col_or_na <- function(nm) if (nm %in% names(sinan)) {
+    as.character(sinan[[nm]]) } else NA_character_
+
+  coalesced <- coalesce_muni_code(sinan[[res_col]], sinan[[occ_col]])
+  ok <- !is.na(coalesced)
+  out <- data.table::data.table(
+    entry_type = as.character(sinan[[entry_col]])[ok],
+    uf         = uf_from_muni(coalesced[ok]),
+    year       = sinan_year(sinan[[date_col]])[ok],
+    month      = sinan_month(sinan[[date_col]])[ok],
+    situa_ence = col_or_na(closure_col)[ok],
+    test_molec = col_or_na(molec_col)[ok]
   )
+  data.table::setattr(out, "n_residence_fallback", attr(coalesced, "n_fallback"))
+  data.table::setattr(out, "n_unattributable", attr(coalesced, "n_unattributable"))
+  out[]
 }
 
-# --- Local-file loader (side-effecting; runs where the export lives) --------
+# --- State-month aggregates (pure) ------------------------------------------
 
-#' Read a single SINAN-TB export file by extension.
+#' Treatment-initiation counts by state-month (new + relapse).
 #'
-#' Supports `.rds`, `.csv`/`.csv.gz`, `.dbf` (via `foreign`), and `.dbc` (the
-#' native DATASUS compressed format, via `read.dbc`). Returns a data.table with
-#' the raw dictionary column names preserved.
+#' @param records Output of `standardise_sinan_tb()`.
+#' @param keep_entry Entry-type codes to count (canonically
+#'   `SINAN_ENTRY_KEEP_CODES` = c("1","2")); no default, so the load-bearing
+#'   inclusion rule is never implicit.
+#' @return data.table(uf, year, month, notifications), non-negative integers.
+summarise_notifications <- function(records, keep_entry) {
+  if (!data.table::is.data.table(records)) stop("summarise_notifications: records must be a data.table.")
+  if (missing(keep_entry) || !length(keep_entry)) {
+    stop("summarise_notifications: keep_entry must list the entry-type values ",
+         "to count (new + relapse); it has no default by design.")
+  }
+  d <- records[as.character(entry_type) %in% as.character(keep_entry)]
+  out <- d[, .(notifications = .N), by = .(uf, year, month)]
+  data.table::set(out, j = "notifications", value = as.integer(out$notifications))
+  data.table::setorder(out, uf, year, month)
+  out[]
+}
+
+#' Treatment-outcome fractions by state-month, over the kept (new + relapse)
+#' notifications with a known closure status (`SITUA_ENCE`).
+#'
+#' Provisional code sets (confirm with the 2025 supplement / PI): death = TB
+#' death (3) + other death (4); abandonment = abandonment (2) + primary
+#' abandonment (10). Cohort is dated by notification month (`DT_DIAG`); the
+#' supplement may instead key on closure date.
+#'
+#' @return data.table(uf, year, month, n_closed, pri_mort_t, pri_aban_t).
+treatment_outcomes <- function(records, keep_entry,
+                               death_codes = c("3", "4"),
+                               aban_codes = c("2", "10")) {
+  if (missing(keep_entry) || !length(keep_entry)) {
+    stop("treatment_outcomes: keep_entry must be supplied.")
+  }
+  d <- records[as.character(entry_type) %in% as.character(keep_entry) &
+                 !is.na(situa_ence) & situa_ence != ""]
+  out <- d[, .(
+    n_closed = .N,
+    pri_mort_t = sum(situa_ence %in% death_codes) / .N,
+    pri_aban_t = sum(situa_ence %in% aban_codes) / .N
+  ), by = .(uf, year, month)]
+  data.table::setorder(out, uf, year, month)
+  out[]
+}
+
+#' GeneXpert share-among-notified by state-month: the share of kept (new +
+#' relapse) notifications for which the rapid molecular test was performed
+#' (`TEST_MOLEC` in `performed`). A capacity proxy (denominator is the notified
+#' set); interpret cautiously. Months with no TEST_MOLEC values (pre-GeneXpert)
+#' yield a share of 0.
+#'
+#' @return data.table(uf, year, month, n_notif, n_genexpert, genexpert_share).
+genexpert_share <- function(records, keep_entry,
+                            performed = c("1", "2", "3", "4")) {
+  if (missing(keep_entry) || !length(keep_entry)) {
+    stop("genexpert_share: keep_entry must be supplied.")
+  }
+  d <- records[as.character(entry_type) %in% as.character(keep_entry)]
+  out <- d[, .(
+    n_notif = .N,
+    n_genexpert = sum(!is.na(test_molec) & test_molec %in% performed)
+  ), by = .(uf, year, month)]
+  out[, genexpert_share := n_genexpert / n_notif]
+  data.table::setorder(out, uf, year, month)
+  out[]
+}
+
+# --- Local-file loader (side-effecting) -------------------------------------
+
+#' Read a single SINAN-TB export file by extension (.rds/.csv/.csv.gz/.dbf/.dbc).
 read_sinan_file <- function(file) {
   ext <- tolower(tools::file_ext(file))
   raw <- switch(
@@ -164,32 +169,26 @@ read_sinan_file <- function(file) {
   data.table::as.data.table(raw)
 }
 
-#' Read local SINAN-TB notification file(s) and return treatment-initiation
-#' counts by municipality-year.
+#' Read local SINAN-TB export file(s) and standardise to notification records.
 #'
 #' Side-effecting (reads files). The testable logic lives in
-#' `standardise_sinan_tb()` and `summarise_notifications()`. SINAN-TB is the only
-#' source NOT pulled over the network; supply the PI's export from
-#' data/raw/TB_notifications/.
+#' `standardise_sinan_tb()` and the aggregators.
 #'
-#' @param files A directory (all matching files inside are read and row-bound,
-#'   e.g. one per year) or a character vector of file paths.
-#' @param keep_entry Raw entry-type codes for new case + relapse. Defaults to
-#'   `SINAN_ENTRY_KEEP_CODES` (c("1", "2"), confirmed from the dictionary).
+#' @param files A directory (all matching files read and row-bound, e.g. one per
+#'   year) or a character vector of file paths.
 #' @param pattern File-name pattern used when `files` is a directory.
-load_sinan_tb_notifications <- function(files,
-                                        keep_entry = SINAN_ENTRY_KEEP_CODES,
-                                        pattern = "[.](rds|csv|csv\\.gz|dbf|dbc)$") {
+#' @return data.table of standardised notification records.
+load_sinan_records <- function(files,
+                               pattern = "[.](rds|csv|csv\\.gz|dbf|dbc)$") {
   if (length(files) == 1L && dir.exists(files)) {
     files <- list.files(files, pattern = pattern, full.names = TRUE,
                         ignore.case = TRUE)
   }
   if (!length(files)) {
-    stop("load_sinan_tb_notifications: no SINAN-TB export file(s) found. ",
+    stop("load_sinan_records: no SINAN-TB export file(s) found. ",
          "Place the notification export in data/raw/TB_notifications/.")
   }
   raw <- data.table::rbindlist(lapply(files, read_sinan_file),
                                use.names = TRUE, fill = TRUE)
-  sinan <- standardise_sinan_tb(raw)
-  summarise_notifications(sinan, keep_entry = keep_entry)
+  standardise_sinan_tb(raw)
 }

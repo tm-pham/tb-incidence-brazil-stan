@@ -59,3 +59,26 @@ coalesce_muni_code <- function(residence, occurrence) {
   attr(out, "n_total") <- length(out)
   out
 }
+
+#' Federative unit (state) code from a municipality code.
+#'
+#' The Brazilian 2-digit UF code is the leading two digits of both the 6- and
+#' 7-digit IBGE municipality code. Records are attributed to a municipality
+#' (residence, occurrence fallback) and then rolled up to the state.
+#'
+#' @param x A vector of municipality codes (integer or character).
+#' @return An integer vector of 2-digit UF codes. Errors if any code does not
+#'   begin with a plausible UF (11-53).
+uf_from_muni <- function(x) {
+  s <- trimws(as.character(x))
+  if (any(is.na(s) | s == "")) {
+    stop("uf_from_muni: municipality codes contain NA or empty values.")
+  }
+  uf <- suppressWarnings(as.integer(substr(s, 1L, 2L)))
+  if (any(is.na(uf) | uf < 11L | uf > 53L)) {
+    bad <- unique(s[is.na(uf) | uf < 11L | uf > 53L])
+    stop("uf_from_muni: codes do not start with a valid UF (11-53); e.g. ",
+         paste(utils::head(bad, 5L), collapse = ", "), ".")
+  }
+  uf
+}
