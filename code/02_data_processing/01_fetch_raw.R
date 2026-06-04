@@ -14,8 +14,8 @@
 #
 # This is a thin driver over the targets DAG defined in _targets.R (the single
 # source of truth for run order). Equivalent canonical command:
-#   targets::tar_make(names = c("raw_notifications", "raw_deaths", "raw_population"))
+#   targets::tar_make(names = c("sinan_records_file", "sim_records_file", "population_annual_file"))
 
 targets::tar_make(
-  names = c("raw_notifications", "raw_deaths", "raw_population")
+  names = c("sinan_records_file", "sim_records_file", "population_annual_file")
 )
