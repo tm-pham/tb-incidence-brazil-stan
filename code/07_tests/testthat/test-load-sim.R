@@ -4,6 +4,15 @@
 library(data.table)
 source(here::here("code", "02_data_processing", "load_sim.R"))
 
+test_that("sim_year reads the year from SIM ddmmyyyy dates and Dates", {
+  # ddmmyyyy: year is the LAST four chars (opposite end from SINAN).
+  expect_equal(sim_year(c("15032018", "01122019")), c(2018L, 2019L))
+  # Robust to a dropped leading zero on the day (7 chars).
+  expect_equal(sim_year("1032018"), 2018L)
+  expect_equal(sim_year(as.Date(c("2018-03-15", "2019-12-01"))),
+               c(2018L, 2019L))
+})
+
 test_that("filter_tb_deaths keeps only A15-A19 underlying causes", {
   sim <- data.table(
     cause    = c("A150", "A162", "A199", "B900", "J189", "A179"),

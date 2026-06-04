@@ -6,6 +6,20 @@
 
 source(here::here("code", "02_data_processing", "geo_utils.R"))
 
+#' Extract the calendar year from a SIM date column.
+#'
+#' Raw SIM `DTOBITO` is `ddmmyyyy` (day-month-year), so the year is the LAST four
+#' characters (note: the opposite end from SINAN's `YYYYMMDD`). Also handles
+#' `Date` values, in case the column was pre-processed.
+#'
+#' @param x A `Date` or character vector.
+#' @return An integer vector of years.
+sim_year <- function(x) {
+  if (inherits(x, "Date")) return(as.integer(format(x, "%Y")))
+  s <- trimws(as.character(x))
+  suppressWarnings(as.integer(substr(s, nchar(s) - 3L, nchar(s))))
+}
+
 #' Reduce a standardised SIM death frame to TB-death counts by municipality-year.
 #'
 #' Pure: no I/O. (1) Keeps rows whose UNDERLYING cause (CAUSABAS) is an active-TB
@@ -75,8 +89,12 @@ filter_tb_deaths <- function(sim,
 #' Fetch SIM deaths from DATASUS and return TB-death counts by municipality-year.
 #'
 #' Side-effecting (network + microdatasus). Not exercised by unit tests; the
-#' testable logic lives in filter_tb_deaths(). Confirm the microdatasus API and
-#' column names against the installed package version before the first run.
+#' testable logic lives in filter_tb_deaths() and sim_year(). We use the raw
+#' SIM-DO columns directly and deliberately SKIP microdatasus::process_sim():
+#' we need only four fields, and process_sim() decodes many others (it currently
+#' fails with "object 'tabNaturalidade' not found" on some package/data
+#' versions). Raw SIM-DO column names: CAUSABAS (underlying cause), CODMUNRES
+#' (residence), CODMUNOCOR (occurrence), DTOBITO (date of death, ddmmyyyy).
 #'
 #' @param year_start,year_end Inclusive death-year range (from DTOBITO).
 #' @param uf Optional vector of state abbreviations to restrict the pull.
@@ -92,14 +110,14 @@ load_sim_deaths <- function(year_start, year_end, uf = "all",
     year_start = year_start, year_end = year_end, uf = uf,
     information_system = "SIM-DO"
   )
-  raw <- microdatasus::process_sim(raw)
   raw <- data.table::as.data.table(raw)
-  # Standardise to the columns filter_tb_deaths() expects.
+  # Standardise to the columns filter_tb_deaths() expects, from the RAW fetch
+  # (no process_sim). DTOBITO is ddmmyyyy, parsed by sim_year().
   sim <- data.table::data.table(
     cause    = raw$CAUSABAS,
     muni_res = raw$CODMUNRES,
     muni_occ = raw$CODMUNOCOR,
-    year     = as.integer(format(as.Date(raw$DTOBITO), "%Y"))
+    year     = sim_year(raw$DTOBITO)
   )
   filter_tb_deaths(sim, icd3 = icd3)
 }
