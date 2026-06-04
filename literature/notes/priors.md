@@ -20,14 +20,23 @@ both read from this table. Parameters the 2025 model split pre/post-COVID
 (self-cure, case fatality) should be kept biologically constant here (with
 sensitivity); only reporting-related quantities drift over time.
 
-| Param | Meaning | Prior (2025 Table S2) | Verified? |
-|-------|---------|-----------------------|-----------|
-| `mu` | survival without treatment / self-cure | TBD from supplement | **confirm** |
-| Pr(death \| lost to follow-up) | treated case fatality among LTFU | Beta(10, 190) | confirm |
-| Pr(death \| undiagnosed) | untreated case fatality | Beta(113, 87) | confirm |
-| incidence intercept / slope | log-incidence trend terms | Normal(0, 10) | confirm |
-| detection intercept / slope | logit-detection trend terms | Normal(0, 1) | confirm |
-| death-reporting adjustment | see below (now TIME-VARYING) | static Beta(150, 50) in 2025; generalise | **confirm + generalise** |
+Verification status (2026-06-04): the 2021 and 2022 supplements were read
+directly (`literature/open_access_pdfs/`); confirmations below cite Chitwood 2021
+Table S1 / Appendix 2 unless noted. The 2025 supplement is still NOT in the repo,
+so genuinely 2025-only values are flagged "2025-only (unverified)". The
+main-article bodies are not text-extractable, so the ICD-10 sets / SINAN
+exclusions could not be confirmed from these files.
+
+| Param | Meaning | Prior | Verified? |
+|-------|---------|-------|-----------|
+| `mu` | survival without treatment / self-cure | Beta(25.65, 33.32), mean ~0.45 | **CONFIRMED** (2021 Table S1; 2022 rounds 25.7,33.3). Untreated CFR = 1 - mu ~ 0.55. |
+| `delta` = Pr(death \| lost to follow-up) | treated CFR among LTFU | Beta(4.29, 81.47), mean ~0.035 | **CONFIRMED** (2021 Table S1). NB the Beta(10,190) once listed here is 2025-only (unverified), not in 2021/2022. |
+| Pr(death \| undiagnosed) | untreated case fatality | Beta(113, 87) | **2025-only (unverified)**. In 2021/2022 this is just `1 - mu` (~0.55), numerically close. |
+| incidence intercept + covariate coefs | log-incidence | Normal(0, 10) | **CONFIRMED** (2021/2022). |
+| detection intercept + covariate coefs | logit-detection | Normal(0, 10) | **CONFIRMED** (2021). NB Normal(0,1) applies to the *random effects*, not the intercept/coefs. |
+| death-reporting adjustment | see below (now TIME-VARYING) | logit-linear (2021); static Beta(150,50) is 2025-only | **structure CONFIRMED (2021)**; generalise to time-varying. |
+| `lambda` (= `p_mort_mort`) | Pr(a treatment-outcome "death" appears in SIM) | Beta(28.4, 11.6), mean ~0.71 | **CONFIRMED** (2022 Table S1; src Bartholomay 2014). Record-linkage prob, NOT an on-treatment death prob. |
+| `eta` (= `p_mort_abandon`) | Pr(a treatment-outcome "LTFU" appears in SIM) | Beta(2.14, 40.7), mean ~0.05 | **CONFIRMED** (2022 Table S1; src Bartholomay 2014). |
 
 ### Death-reporting adjustment (time-varying — first-order requirement)
 
@@ -45,9 +54,15 @@ settings:
 | A | low (1% poorly-defined cause) | Beta(52.97, 451.2) | ~0.105 |
 | B | high (15% poorly-defined cause) | Beta(97.83, 285.8) | ~0.255 |
 
-with logit-linear trend parameters `theta0 ~ Normal(0, 1)`,
-`theta2 ~ Normal(0, 0.05)`, `theta3 ~ Normal(0, 1)` (verify against the
-supplement and reconcile with the 2025 monthly parameterisation).
+with logit-linear trend parameters `theta0 ~ Normal(0, 1)` (intercept),
+`theta2 ~ Normal(0, 0.05)` (linear time trend), `theta3 ~ Normal(0, 1)`
+(poorly-defined-cause coefficient). **All CONFIRMED** against Chitwood 2021
+Table S1 (2026-06-04). The full 2021 form is
+`rho_ij = inv_logit(theta0 + theta1_i*sigma + theta2*(j - J) + theta3*x_ij)` with
+`x_ij` the poorly-defined-cause fraction; `theta2` is the time-trend term to
+reuse for our time-varying adjustment (2022, being a single cross-section, drops
+it). Minor source variants on anchor A's second parameter: 451.2 (Table S1),
+451.54 (Appendix 2 prose), 451.15 (GitHub Stan); cite Table S1 = 451.2.
 
 ## Regression and random-effect priors (Chitwood 2021/2025)
 
@@ -107,17 +122,19 @@ structure: a smooth long-run trend (penalised spline or RW2 on coarse knots) on
 log-incidence and logit-detection, an explicit COVID shock at April 2020, and a
 seasonal component. No monthly AR-1 random walk.
 
-### DISCREPANCY with the provisional table above (resolve with PI)
+### DISCREPANCY — RESOLVED (2026-06-04, against the 2021/2022 supplements)
 
-The provisional load-bearing values at the top of this file (`mu`=0.435
-Beta(25.65,33.32); `delta`=0.05 Beta(4.29,81.47); scalar `pi`=0.90, `rho`=0.85)
-do NOT match the reference spatial model, which instead uses untreated
-survival `p_surv_no_notif`~Normal(0.3,0.001) (CFR_untreated ~0.70, not 0.565),
-a two-component treated CFR (`p_mort_mort`/`p_mort_abandon` with data-informed
-`mort_treat`/`aban_treat`), `p_cov` (= `pi`) supplied as DATA per area (not a
-scalar prior), and `death_adj` (= 1 - `rho`) as a logit-linear function of `idc`.
-The simulator and provisional priors must be reconciled to whichever the 2021
-base / 2022 spatial supplements specify.
+The earlier GitHub-Stan value `p_surv_no_notif ~ Normal(0.3, 0.001)`
+(implying untreated CFR ~0.70) is **REFUTED**: both the 2021 and 2022 supplements
+use survival without treatment `mu ~ Beta(25.65, 33.32)` (mean ~0.45), i.e.
+untreated CFR = 1 - mu ~ 0.55. Use the Beta. Likewise `delta ~ Beta(4.29, 81.47)`
+is confirmed (the Beta(10,190) once carried here is 2025-only and unverified).
+`lambda`/`eta` (`p_mort_mort`/`p_mort_abandon`) are CONFIRMED but are
+record-linkage probabilities (a death/LTFU treatment outcome appears in SIM, from
+Bartholomay 2014), not on-treatment death probabilities. The death adjustment is
+the logit-linear `idc` function (CONFIRMED 2021), to be made time-varying. The
+2025-only quantities (Pr(death|undiagnosed) Beta(113,87); static Beta(150,50);
+the monthly delay distributions) still need the 2025 supplement.
 
 ### Required DATA inputs (beyond notifications/deaths/population)
 
