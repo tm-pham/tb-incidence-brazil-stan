@@ -1,8 +1,8 @@
 # data/
 
-Data for the municipality-level TB incidence model. Most of this tree is git
-ignored for privacy and size. Only `synthetic/` and the README/`.gitkeep`
-markers are tracked.
+Data for the state-month TB incidence and detection model (Brazil, 2003-2023).
+Most of this tree is git ignored for privacy and size. Only `synthetic/` and the
+README/`.gitkeep` markers are tracked.
 
 ## Layout
 
@@ -13,21 +13,26 @@ markers are tracked.
 | `processed/`  | no       | Analysis-ready tables feeding the Stan data list.                        |
 | `synthetic/`  | yes      | Simulator output. Safe to share. Backs the recovery test and dry runs.  |
 
-## Sources (real data, to be added later)
+## Sources (real data, aggregated to state x year-month, 2003-2023)
 
-- **SINAN** notifications (DATASUS). Exclude notification types "re-engaging in
-  care" and "transfer", and post-mortem diagnoses, since these are not new
-  treatment initiations. Pull one extra earlier year to inform the
-  treatment-outcome priors (death on treatment, lost to follow-up).
-- **SIM** mortality (DATASUS). A death is TB-related if a TB ICD-10 code
-  (A15.0-A19.9, B20.0, K67.3, K93.0, M49.0, N74.1, P37.0, U84.3) is a primary
-  or contributory cause.
-- **IBGE** municipality population, used as the person-time denominator
-  (`gamma`), not a covariate. Note the post-2022 census revision if extending
-  beyond 2021.
-- **Covariates**: Family Health Strategy (FHS) coverage and GDP per capita
-  (use log). SIM coverage (`pi`) and the poorly-defined-cause fraction feed the
-  death-adjustment (`rho`).
+- **SINAN** TB notifications (local export; not served by `microdatasus`).
+  Exclude notification types "re-engaging in care" and "transfer", and
+  post-mortem diagnoses, since these are not new treatment initiations. Also
+  derive the treatment-outcome fractions (death, loss-to-follow-up) from closure
+  status for the mortality likelihood, and the GeneXpert share-among-notified for
+  the detection sub-model.
+- **SIM** mortality (DATASUS). A death is TB-related per the documented ICD-10
+  decision (underlying cause A15-A19; see `literature/notes/priors.md`).
+  Separately, the ill-defined-cause-of-death fraction (garbage codes over
+  all-cause deaths) feeds the time-varying death-reporting adjustment.
+- **IBGE** state population, used as the person-time denominator (`gamma`), not a
+  covariate. Use intercensal estimates spanning the 2000, 2010, and 2022
+  censuses; note the 2022 census revision.
+- **Detection covariate**: GeneXpert (Xpert MTB/RIF) share-among-notified,
+  state-month (a capacity proxy). **External**: a SIM-coverage / vital-
+  registration completeness series to anchor the death adjustment where possible.
+- Note the pre-2008 SINAN/SIM data-quality caveat (see the pre-2008 fork in
+  `literature/notes/priors.md`).
 
 ## Rules
 

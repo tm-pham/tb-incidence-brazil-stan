@@ -13,44 +13,51 @@ reports findings. It does not modify anything.
 
 ## What to check
 
-1. **Joins keep every municipality.** Merges between notifications, deaths,
-   population, and covariates must not silently drop municipalities. Look for
+The target is a **state x year-month** panel over 2003-2023 (27 states x 252
+months). Records are attributed to a municipality (residence, occurrence
+fallback) and aggregated up to state and month.
+
+1. **The grid keeps every state-month.** Merges between notifications, deaths,
+   population, and the covariates (ill-defined-cause fraction, treatment-outcome
+   fractions, GeneXpert share) must not silently drop state-months. Look for
    inner joins that should be left joins, post-join row-count assertions, and
-   handling of municipalities with zero TB deaths or zero notifications (these
-   are valid, not missing). The Stan data assembly must fail loudly if
-   municipality coverage does not match across all four inputs.
+   handling of state-months with zero TB deaths or zero notifications (valid, not
+   missing). The Stan data assembly must fail loudly if state-month coverage does
+   not match across inputs, or if the grid is not the full 27 x 252.
 
 2. **Counts are non-negative integers.** Notifications and deaths must be
    non-negative integers. Flag any place a count could become fractional
    (e.g. an aggregation producing a mean) or negative (e.g. a subtraction of
-   overlapping categories).
+   overlapping categories). The covariate fractions (IDC, treatment outcomes,
+   GeneXpert share) are in `[0,1]`, not counts.
 
-3. **SINAN exclusions applied correctly.** Notification types "re-engaging in
-   care" and "transfer" and post-mortem diagnoses must be excluded, because they
-   are not new treatment initiations. Confirm the exclusion is on the correct
-   field and value codes, and that the one extra earlier year used for
-   treatment-outcome priors is handled separately, not mixed into the main
-   notification counts.
+3. **SINAN exclusions and derived covariates correct.** Notification types
+   "re-engaging in care" and "transfer" and post-mortem diagnoses must be excluded
+   from the notification numerator. The treatment-outcome fractions (death,
+   loss-to-follow-up) feed the mortality likelihood and must come from the closure
+   status (`SITUA_ENCE`); the GeneXpert share-among-notified is the detection
+   covariate. Confirm each derives from the correct field and codes.
 
-4. **ICD-10 death definition correct.** A death is TB-related if a TB ICD-10
-   code (A15.0-A19.9, B20.0, K67.3, K93.0, M49.0, N74.1, P37.0, U84.3) is a
-   primary OR contributory cause. Confirm the code list and range matching is
-   exact (A15.0-A19.9 is a range), and that contributory-cause fields are
-   actually searched, not just the primary cause.
+4. **ICD-10 definitions correct.** Confirm the TB-death definition matches the
+   documented decision in `literature/notes/priors.md` (underlying cause A15-A19),
+   and that the ill-defined-cause-of-death covariate counts the right garbage-code
+   set (R00-R99 etc.) over ALL-cause deaths. Flag inexact range matching.
 
-5. **Population denominators present and year-aligned.** Every municipality-year
-   used in the likelihood must have an IBGE population denominator for the same
-   year. Population is person-time (`gamma`), not a covariate. Flag any year
-   misalignment and the post-2022 census revision caveat if the period extends
-   beyond 2021.
+5. **Population denominators present and month-aligned.** Every state-month used
+   in the likelihood must have an IBGE state population denominator. Population is
+   person-time (`gamma`), not a covariate. Denominators span the 2000/2010/2022
+   censuses: flag a single-census denominator, missing intercensal interpolation,
+   month misalignment, or ignoring the 2022 revision.
 
 6. **NA handling explicit.** No silent `na.rm = TRUE` that hides missing
    denominators or covariates. Missingness should be detected and either
-   resolved or made to fail loudly, never quietly dropped.
+   resolved or made to fail loudly, never quietly dropped. Pay attention to the
+   weaker pre-2008 years (SINAN/SIM quality): early-period gaps must be visible,
+   not silently zero-filled.
 
 ## Severity guidance
 
-- **Critical/High**: dropped municipalities, wrong ICD-10 set, wrong SINAN
+- **Critical/High**: dropped state-months, wrong ICD-10 set, wrong SINAN
   exclusion, counts that are not non-negative integers, denominators missing or
   misaligned, silent NA drops that change the likelihood inputs.
 - **Medium/Low**: missing post-join assertions where the join is currently

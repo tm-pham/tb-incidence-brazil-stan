@@ -1,12 +1,17 @@
-# Estimating subnational TB incidence in Brazil using Bayesian evidence synthesis
+# Monthly state-level TB incidence and case detection in Brazil, 2003-2023
 
-Bayesian evidence synthesis to estimate **true tuberculosis incidence at the
-municipality level in Brazil**, and the fraction of incident cases that are
-detected and treated, from routinely collected SINAN notifications and SIM
-mortality data, fit in [Stan](https://mc-stan.org/) via cmdstanr.
+A **state-month mechanistic model** of tuberculosis **incidence** and
+**case-detection probability** for Brazil over **2003-2023 (252 monthly time
+points)**, from routinely collected SINAN notifications and SIM mortality data,
+fit in [Stan](https://mc-stan.org/) via cmdstanr one state at a time.
 
-The estimand is true incidence, which is not directly observed. The method
-follows Chitwood et al. (see `literature/references.bib`). 
+The estimands are true incidence and the case-detection probability, neither
+directly observed. The base model extends Chitwood et al. 2025 (IJE), the monthly
+natural-history model (see `literature/references.bib`). These estimates feed a
+separate municipality-month panel study of air pollution and TB, so effects can
+be reported on the incidence scale rather than the notification scale. We do
+**not** build a municipality-month incidence model (see `CLAUDE.md`, Scope
+decision).
 
 The project also serves as a working example of how AI-assisted coding workflows
 can support reproducible academic modeling. In particular, the repository uses
@@ -15,33 +20,36 @@ reproducibility checks.
 
 ## Goals
 
-1. Estimate latent TB incidence by municipality.
-2. Combine information from notification and mortality data.
-3. Quantify uncertainty using Bayesian inference.
-4. Evaluate model fit using posterior predictive checks.
-5. Maintain a reproducible R/Stan workflow.
-6. Document where AI coding agents were useful and where human review was required.
+1. Estimate latent monthly TB incidence by state, 2003-2023.
+2. Estimate the monthly case-detection probability by state.
+3. Combine information from notification and mortality data.
+4. Quantify uncertainty using Bayesian inference.
+5. Evaluate model fit using per-state posterior predictive checks.
+6. Maintain a reproducible R/Stan workflow.
+7. Document where AI coding agents were useful and where human review was required.
 
 ## The identifying idea
 
-Incidence is approximated by the rate at which individuals exit untreated active
-disease, by one of three routes: treatment initiation (observed in SINAN), death
-before treatment (observed in SIM), or self-cure (unobserved, fixed by an
-informative prior). Notifications and deaths identify incidence and the fraction
-treated only because informative priors pin the natural-history parameters
-(`delta`, `mu`, `pi`, `rho`). Those priors are load bearing; see `CLAUDE.md`.
+Notifications (SINAN) and deaths (SIM) are observations generated from incidence
+through the monthly natural-history process: infection to symptom onset to
+detectable to notification or death, via fixed-delay convolutions. They identify
+incidence and the case-detection probability only because informative priors pin
+the natural-history parameters. The death channel identifies detection, so the
+**death-reporting adjustment is time-varying** across the full window. Those
+priors are load bearing; see `CLAUDE.md`.
 
 ## Status
 
-Project scaffolding and reviewer tooling. Models, pipeline, and data loaders are
-built phase by phase. Real-data sampling will run on the Notchpeak cluster.
+Project scaffolding, data loaders, and reviewer tooling. The state-month model,
+pipeline, and estimates are built phase by phase. Real-data sampling will run on
+the Notchpeak cluster.
 
 ## Layout
 
 ```
 code/                R code by stage (config, functions, data, modeling,
                      diagnostics, analysis, visualization, tests, reports)
-code/03_modeling/stan/   Stan models (annual base, spatial hierarchical,
+code/03_modeling/stan/   Stan models (state-month base, components,
                          sensitivity)
 data/                raw/interim/processed (git ignored), synthetic (tracked)
 literature/          references.bib, extraction notes, private PDFs (ignored)
@@ -58,7 +66,8 @@ Makefile             Thin CLI over targets and tests
 - **R** with **data.table** and the base pipe `|>`.
 - **Stan** via **cmdstanr**; dependencies pinned with **renv**.
 - **targets** for the pipeline; **testthat** for tests.
-- Spatial data via **geobr**; population from **IBGE**.
+- State population from **IBGE** (intercensal estimates spanning the 2000, 2010,
+  and 2022 censuses).
 
 > **Note:** `renv.lock` is currently a placeholder. Run
 > `Rscript code/00_config/setup_renv.R` on a machine with CRAN access (the
@@ -78,11 +87,15 @@ tables to `data/interim/`, then a deterministic **assemble** step that writes th
 Stan data list to `outputs/stan_data/tb_stan_data.rds` with a vintage-stamped
 report in `outputs/logs/`.
 
-**Sources.** SINAN-TB notifications are read from a local export placed in
-`data/raw/TB_notifications/` (`.dbc`/`.dbf`/`.csv`/`.rds`) -- SINAN-TB is not
-served by `microdatasus`. SIM mortality is pulled from DATASUS and IBGE
-population from SIDRA, so the prepare step needs both the notification file and
-network access.
+**Sources** (aggregated to **state x year-month**, 2003-2023). SINAN-TB
+notifications are read from a local export placed in `data/raw/TB_notifications/`
+(`.dbc`/`.dbf`/`.csv`/`.rds`) -- SINAN-TB is not served by `microdatasus`. SIM
+mortality is pulled from DATASUS and IBGE population from SIDRA, so the prepare
+step needs both the notification file and network access. The model also uses
+treatment-outcome fractions (death, loss-to-follow-up) for the mortality
+likelihood, the ill-defined-cause-of-death covariate for the time-varying death
+adjustment, and the GeneXpert share-among-notified covariate for the detection
+sub-model.
 
 ```bash
 make data       # build the Stan data (fetch if needed, then assemble)

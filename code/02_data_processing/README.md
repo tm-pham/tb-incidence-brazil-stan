@@ -1,7 +1,15 @@
 # Data processing
 
-Builds the municipality-by-year Stan data list (notifications, deaths, and the
-IBGE person-time offset) from SINAN, SIM, and IBGE.
+Builds the Stan data list (notifications, deaths, and the IBGE person-time
+offset, plus the IDC / treatment-outcome / GeneXpert covariates) from SINAN, SIM,
+and IBGE.
+
+> **Scope (2026-06-04):** the target is now a **state x year-month** panel,
+> 2003-2023 (see `CLAUDE.md`). The loaders below currently aggregate to
+> **municipality-year** and predate this change; they must be re-pointed to
+> state-month and extended with the new covariates. The per-record SINAN/SIM/IBGE
+> definitions still apply; only the aggregation key (state x year-month) and the
+> window change.
 
 **Sources.** SINAN-TB notifications are read from the PI's local export in
 `data/raw/TB_notifications/` (`.dbc`/`.dbf`/`.csv`/`.rds`) -- SINAN-TB is not

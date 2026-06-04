@@ -1,28 +1,44 @@
 # Prior specifications (provisional)
 
-Single source of truth for the model priors. Cited from the kickoff
-specification and CLAUDE.md. **Provisional**: the Chitwood PDFs are not yet
-present in `literature/private_pdfs/` (git ignored, not in this container), so
-the entries below have NOT been verified against the supplements. The literature
-agent must confirm every value and add a page/table reference once the PDFs are
-available. Cite, never invent.
+Single source of truth for the model priors. The base model is the **Chitwood
+2025 (IJE) monthly natural-history model** fit per state over 2003-2023; its
+supplement (Table S2) is the primary source for the priors and delay
+distributions. The 2021 annual evidence-synthesis paper is the precedent for the
+death-reporting-adjustment structure (now made time-varying) and some priors.
+**Provisional**: the Chitwood PDFs are not yet present in
+`literature/private_pdfs/` (git ignored, not in this container), so the entries
+below have NOT been verified against the supplements. The literature agent must
+confirm every value and add a page/table reference once the PDFs are available.
+Cite, never invent.
 
-## Load-bearing natural-history priors (Chitwood 2021 annual core)
+## Load-bearing natural-history priors (Chitwood 2025 monthly base)
 
-These four identify the model. Treat any change as a change to the
-identification strategy (see CLAUDE.md). The simulator defaults in
-`code/01_functions/simulate.R` (`tb_natural_history()`) and the future
-`code/03_modeling/priors.R` must both read from this table.
+These identify the model and must come from the 2025 supplement (Table S2). Treat
+any change as a change to the identification strategy (see CLAUDE.md). The
+simulator (`code/01_functions/simulate.R`) and `code/03_modeling/priors.R` must
+both read from this table. Parameters the 2025 model split pre/post-COVID
+(self-cure, case fatality) should be kept biologically constant here (with
+sensitivity); only reporting-related quantities drift over time.
 
-| Param | Meaning | Prior | Mean | Verified? |
-|-------|---------|-------|------|-----------|
-| `mu` | survival untreated / self-cure | Beta(25.65, 33.32) | 0.435 | mean matches Beta; supplement page TBD |
-| `delta` | P(death \| lost to follow-up) | Beta(4.29, 81.47) | 0.050 | mean matches Beta; supplement page TBD |
-| `pi` | SIM mortality-system coverage | TBD | 0.900 (provisional) | **No cited distribution yet** |
-| `rho` | TB-death under-reporting adjustment | logit-linear in poorly-defined-cause fraction (see below) | 0.850 (provisional scalar) | **Structure not yet implemented** |
+| Param | Meaning | Prior (2025 Table S2) | Verified? |
+|-------|---------|-----------------------|-----------|
+| `mu` | survival without treatment / self-cure | TBD from supplement | **confirm** |
+| Pr(death \| lost to follow-up) | treated case fatality among LTFU | Beta(10, 190) | confirm |
+| Pr(death \| undiagnosed) | untreated case fatality | Beta(113, 87) | confirm |
+| incidence intercept / slope | log-incidence trend terms | Normal(0, 10) | confirm |
+| detection intercept / slope | logit-detection trend terms | Normal(0, 1) | confirm |
+| death-reporting adjustment | see below (now TIME-VARYING) | static Beta(150, 50) in 2025; generalise | **confirm + generalise** |
 
-The death under-reporting adjustment `rho` is anchored by an expert-opinion
-survey at two poorly-defined-cause settings:
+### Death-reporting adjustment (time-varying — first-order requirement)
+
+The 2025 model uses a static death reporting adjustment `~ Beta(150, 50)`. For
+2003-2023 this MUST be made time-varying (retain the linear time trend and the
+ill-defined-cause-of-death (IDC) covariate from Chitwood 2021, fed the actual IDC
+series for all years; anchor to external SIM coverage estimates where possible),
+or improving death registration is confounded with falling incidence and rising
+detection. The 2021 structure models it as a logit-linear function of the
+poorly-defined-cause fraction, anchored by an expert-opinion survey at two
+settings:
 
 | Anchor | Setting | Prior | Mean |
 |--------|---------|-------|------|
@@ -30,9 +46,10 @@ survey at two poorly-defined-cause settings:
 | B | high (15% poorly-defined cause) | Beta(97.83, 285.8) | ~0.255 |
 
 with logit-linear trend parameters `theta0 ~ Normal(0, 1)`,
-`theta2 ~ Normal(0, 0.05)`, `theta3 ~ Normal(0, 1)`.
+`theta2 ~ Normal(0, 0.05)`, `theta3 ~ Normal(0, 1)` (verify against the
+supplement and reconcile with the 2025 monthly parameterisation).
 
-## Regression and random-effect priors (Chitwood 2021)
+## Regression and random-effect priors (Chitwood 2021/2025)
 
 | Param | Prior |
 |-------|-------|
@@ -44,11 +61,17 @@ with logit-linear trend parameters `theta0 ~ Normal(0, 1)`,
 Source: `mel-hc/TB_saie`, file `SpatialModel/Spatial_model.stan` (Chitwood 2022
 spatial, `chitwood2022spatial`). The repo has NO licence, so we use only the
 published model structure and prior VALUES (facts), and write our own Stan; we do
-not copy its code. The base model follows `chitwood2021bes` (Epidemics, annual),
-which may differ slightly from the 2022 spatial values below — the 2021 supplement
-is the source of truth for the base model and must be checked.
+not copy its code. **Scope note:** the 2022 spatial model is the municipality
+BYM2 burden-mapping precedent, which is OUT OF SCOPE for this repo (we fit a
+state-month series, no municipality model). It is recorded here because its
+natural-history likelihood (the notification/death structure and the
+death-reporting adjustment as a logit-linear function of the ill-defined-cause
+fraction) carries over to the state-month model; the BYM2/ICAR spatial rows below
+do not and are kept only as reference. The state-month base follows
+`chitwood2025disruptions` (monthly) plus the 2021 death-adjustment structure;
+those supplements are the source of truth and must be checked.
 
-Likelihood (Poisson), municipality i:
+Likelihood (Poisson), per area (here state, originally municipality):
 ```
 notif[i]  ~ Poisson( pop100k[i] * inc[i] * ft[i] )
 deaths[i] ~ Poisson( m_deaths[i] * p_cov[i] * (1 - death_adj[i]) )
@@ -74,10 +97,15 @@ Priors (verbatim from the reference Stan):
 | `theta_d` / `sigma_d` | Normal(0,1) / Cauchy(0,2) | death-adj random effect |
 | anchor `a` (idc=0.01) | Beta(52.97, 451.15) | ~0.105 |
 | anchor `b` (idc=0.15) | Beta(97.83, 285.81) | ~0.255 |
-| `theta_in`, `theta_ft` | Normal(0,1) | BYM2 non-spatial part |
-| `rho_in`, `rho_ft` | Beta(1.5, 1.5) | BYM2 spatial-variance fraction |
-| `sigma_in`, `sigma_ft` | Cauchy(0, 2) | BYM2 scales |
-| ICAR `phi` | pairwise-difference + mean(phi) ~ Normal(0, 0.001) | soft sum-to-zero |
+| `theta_in`, `theta_ft` | Normal(0,1) | BYM2 non-spatial part (OUT OF SCOPE) |
+| `rho_in`, `rho_ft` | Beta(1.5, 1.5) | BYM2 spatial-variance fraction (OUT OF SCOPE) |
+| `sigma_in`, `sigma_ft` | Cauchy(0, 2) | BYM2 scales (OUT OF SCOPE) |
+| ICAR `phi` | pairwise-difference + mean(phi) ~ Normal(0, 0.001) | spatial; OUT OF SCOPE |
+
+For the state-month model the BYM2/ICAR spatial rows are replaced by the temporal
+structure: a smooth long-run trend (penalised spline or RW2 on coarse knots) on
+log-incidence and logit-detection, an explicit COVID shock at April 2020, and a
+seasonal component. No monthly AR-1 random walk.
 
 ### DISCREPANCY with the provisional table above (resolve with PI)
 
@@ -93,51 +121,57 @@ base / 2022 spatial supplements specify.
 
 ### Required DATA inputs (beyond notifications/deaths/population)
 
-The model needs these per municipality-year; flagged because our data processing
-does not yet produce them:
+The model needs these per **state-month** (2003-2023); flagged because our data
+processing does not yet produce them:
 
-- `p_cov` — vital-registration completeness (proportion of true deaths captured
-  by SIM). NOT computable from SIM alone; an EXTERNAL estimate (paper supplement
-  / Brazilian VR-completeness studies). **Need a source.**
 - `idc` — fraction of all-cause deaths with ill-defined (garbage) causes
-  (ICD-10 R00-R99 etc.). Computable from SIM all-cause deaths. **New loader.**
-- `pri_mort_t`, `pri_aban_t` — treatment death and abandonment fractions, from
-  SINAN closure status (`SITUA_ENCE`). Computable from the notification export.
-  **New loader.**
-
-## Monthly extension priors (Chitwood 2025, Table S2) — for later
-
-Incidence intercept/slope ~ Normal(0, 10); fraction-detected intercept/slope ~
-Normal(0, 1); P(death | lost-to-follow-up) ~ Beta(10, 190); P(death |
-undiagnosed) ~ Beta(113, 87); death reporting adjustment ~ Beta(150, 50).
+  (ICD-10 R00-R99 etc.), the covariate driving the time-varying death adjustment.
+  Computable from SIM all-cause deaths. **New loader.**
+- `pri_mort_t`, `pri_aban_t` — treatment death and loss-to-follow-up fractions
+  for the mortality likelihood, from SINAN closure status (`SITUA_ENCE`).
+  Computable from the notification export. **New loader.**
+- GeneXpert share-among-notified — the detection covariate (state-month). A
+  capacity proxy conditioned on being notified; interpret its coefficient
+  cautiously. **New loader.**
+- `p_cov` / external SIM coverage — vital-registration completeness, used to
+  anchor the time-varying death adjustment where possible. EXTERNAL estimate
+  (paper supplement / Brazilian VR-completeness studies). **Need a source.**
 
 ## Open decisions (need PI input + the supplement)
 
 These are load-bearing and depend on values not yet available in this container.
-They are deliberately deferred; the simulator uses provisional scalars in the
-meantime, with `simulate_tb_counts()` already accepting area-varying `pi`/`rho`
-so no refactor is needed once resolved.
 
-1. **`rho` parameterisation.** The spec models `rho` as `inv_logit` of a
-   logit-linear function of the municipality poorly-defined-cause fraction
-   (via `theta0/theta2/theta3`, anchored by A and B). The simulator currently
-   uses a fixed scalar `rho = 0.85`. The relationship between the A/B anchor
-   means (~0.105, ~0.255) and a central `rho` near 0.85 must be reconciled from
-   the supplement before the recovery test can exercise the `theta` parameters.
-   (stan_model_review H1.)
-2. **`pi` value and identifiability.** `pi` and `rho` enter the death mean only
-   as the product `pi * rho`, so they are jointly identified only through their
-   priors. The provisional `pi = 0.90` has no cited distribution yet.
-   (stan_model_review H2.)
-3. **Municipality transfer.** SIM coverage (`pi`) and the poorly-defined-cause
-   fraction behind `rho` vary across municipalities far more than across states.
-   Uncritical reuse of state-level values would be a High epidemiology finding;
-   justify or re-anchor when municipality data lands.
+1. **Time-varying death-reporting adjustment.** Generalise the 2025 static
+   adjustment (Beta(150, 50)) to a linear time trend plus the IDC covariate
+   (2021 structure), fed the actual IDC series for 2003-2023, anchored to
+   external SIM coverage. Reconcile the 2021 logit-linear anchors (A/B,
+   `theta0/2/3`) with the 2025 monthly parameterisation.
+2. **GeneXpert covariate specification.** Proxy in use is share-among-notified
+   (denominator is the modelled notified set), so it is a capacity proxy.
+   Planned upgrade: an availability/rollout measure not conditioned on the
+   notified set (lab/machine coverage, or share of municipalities with Xpert
+   access). Resolution: state-month if available (rollout was uneven across
+   states). No separate GeneXpert term on the mortality side.
+3. **Pre-2008 data-quality fork.** SINAN/SIM quality before 2008 is weaker.
+   Check 2003-2007 completeness directly, then choose: (a) model 2003-2023 with
+   wide, sensitivity-bounded uncertainty in early years, or (b) start the
+   incidence model in 2008 and handle 2003-2007 of the panel separately.
+4. **External SIM coverage source.** A `p_cov`/completeness series to anchor the
+   death adjustment is not derivable from SIM alone; needs an external source.
 
 ## Data definitions (PI decisions, 2026-06-03)
 
 These define the observed numerators/denominators and so are part of the
 estimand. Encoded in `code/02_data_processing/`; do not change silently.
+
+**Resolution and period (2026-06-04 scope change).** The model is now
+**state-month, 2003-2023** (252 time points). Records are attributed to a
+municipality (residence, with occurrence fallback) and then aggregated up to the
+state (UF) and month; the per-record definitions below are unchanged, only the
+aggregation key (state x year-month) and window differ. The earlier
+municipality-year assembly in `code/02_data_processing/` predates this change and
+must be re-pointed to state-month (see the code-divergence note in the latest
+`agent_reviews/` entry).
 
 - **TB-death definition (SIM).** Underlying cause (`CAUSABAS`) in A15-A19 only
   (active TB); B90 sequelae excluded. Constant `TB_DEATH_ICD3` in `config.R`.

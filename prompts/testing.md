@@ -12,18 +12,21 @@ proportionate to risk. Read only.
 ## What to check
 
 1. **Recovery tests.** There must be a gated recovery test (run on demand, since
-   it samples) that simulates data with known incidence, fraction treated, and
-   natural-history parameters, fits the base model, asserts the sampler is clean
-   (no divergences, R-hat < 1.01, adequate ESS), and asserts the credible
-   intervals cover the true incidence and fraction treated. Check the
-   assertions are meaningful, not trivially satisfiable.
+   it samples) that simulates a state-month series with known incidence,
+   detection probability, and natural-history parameters, fits the base model for
+   one state, asserts the sampler is clean (no divergences, R-hat < 1.01, adequate
+   ESS), and asserts the credible intervals cover the true incidence and detection
+   probability over time. Check the assertions are meaningful, not trivially
+   satisfiable, and that the trend/COVID-shock/seasonal and time-varying
+   death-adjustment terms are exercised.
 
 2. **Invariant tests.** Fast tests on side-effect-free functions: the simulator
-   is reproducible given a seed, returns non-negative integer counts with
-   correct dimensions, and keeps the fraction treated in `[0,1]`. Data-processing
-   invariants (row counts preserved, exclusions applied, non-negative counts)
-   should be tested where that code exists. The prior specifications in
-   `priors.R` should be asserted against the documented values.
+   is reproducible given a seed, returns non-negative integer monthly counts with
+   correct dimensions, and keeps the detection probability in `[0,1]`.
+   Data-processing invariants (the state-month grid preserved, exclusions
+   applied, non-negative counts, covariate fractions in `[0,1]`) should be tested
+   where that code exists. The prior specifications in `priors.R` should be
+   asserted against the documented 2025 values.
 
 3. **Reproducibility tests.** Determinism is pinned: the same seed gives the same
    simulator output and the same fit. Tests must not depend on hidden global
