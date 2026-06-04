@@ -113,6 +113,9 @@ list(
       fb <- function(d) {
         v <- attr(d, "n_residence_fallback"); if (is.null(v)) NA else v
       }
+      un <- function(d) {
+        v <- attr(d, "n_unattributable"); if (is.null(v)) NA else v
+      }
       report <- c(
         "== TB data processing report ==",
         sprintf("fetched at:           %s",
@@ -130,6 +133,8 @@ list(
                 stan_data$report$deaths_zero_filled),
         sprintf("notif residence-fallback rows: %s", fb(raw_notifications)),
         sprintf("death residence-fallback rows: %s", fb(raw_deaths)),
+        sprintf("notif dropped (no municipality): %s", un(raw_notifications)),
+        sprintf("death dropped (no municipality): %s", un(raw_deaths)),
         "-- vintage --",
         sprintf("R:                    %s", R.version.string),
         sprintf("microdatasus:         %s", pkg_ver("microdatasus")),

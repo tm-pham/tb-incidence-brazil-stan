@@ -49,18 +49,24 @@ filter_tb_deaths <- function(sim,
     out <- data.table::data.table(muni_code = integer(), year = integer(),
                                   deaths = integer())
     data.table::setattr(out, "n_residence_fallback", 0L)
+    data.table::setattr(out, "n_unattributable", 0L)
     return(out)
   }
 
   coalesced <- coalesce_muni_code(d[[res_col]], d[[occ_col]])
-  muni <- normalise_muni6(coalesced)
   year <- as.integer(d[[year_col]])
-  out <- data.table::data.table(muni_code = muni, year = year)[
+  # Drop records that can be placed in no municipality (no valid residence or
+  # occurrence code); the count is surfaced for the processing report.
+  ok <- !is.na(coalesced)
+  muni <- normalise_muni6(coalesced[ok])
+  out <- data.table::data.table(muni_code = muni, year = year[ok])[
     , .(deaths = .N), by = .(muni_code, year)]
   data.table::set(out, j = "deaths", value = as.integer(out$deaths))
   data.table::setorder(out, muni_code, year)
   data.table::setattr(out, "n_residence_fallback",
                       attr(coalesced, "n_fallback"))
+  data.table::setattr(out, "n_unattributable",
+                      attr(coalesced, "n_unattributable"))
   out[]
 }
 

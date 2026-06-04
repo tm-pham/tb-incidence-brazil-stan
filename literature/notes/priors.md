@@ -109,7 +109,11 @@ estimand. Encoded in `code/02_data_processing/`; do not change silently.
   municipality of notification/occurrence when residence is missing (e.g. Sao
   Paulo records with a blank residence code in some years). Helper
   `coalesce_muni_code()`. Codes reconciled to a 6-digit key (`normalise_muni6()`)
-  because SINAN uses 6-digit and IBGE/geobr use 7-digit.
+  because SINAN uses 6-digit and IBGE/geobr use 7-digit. Records with neither a
+  valid residence nor a valid notification/occurrence code cannot be placed in
+  any municipality and are dropped; the count is reported per source
+  (`n_unattributable`) in the processing log. A large count is a data-quality
+  flag to raise with the PI.
 - **Open:** notification/diagnosis year basis (DT_DIAG vs DT_NOTIFIC vs
   treatment-start) and the analysis year range are set in the orchestration
   script, not yet fixed.

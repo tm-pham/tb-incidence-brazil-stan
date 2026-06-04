@@ -35,12 +35,13 @@ normalise_muni6 <- function(x) {
 #' else (blank, NA, sentinel like "999999") triggers the fallback.
 #'
 #' @param residence,occurrence Equal-length vectors of municipality codes.
-#' @return A character vector of the chosen codes (not yet normalised). Errors
-#'   if any row has neither a valid residence nor a valid occurrence code. The
-#'   number of rows that fell back to occurrence is attached as the attribute
-#'   `n_fallback` (and `n_total`) so callers can surface the fallback rate:
-#'   occurrence is biased toward referral centres, so a high fallback rate
-#'   signals numerator/denominator (residence) misalignment.
+#' @return A character vector of the chosen codes (not yet normalised), with
+#'   `NA` where neither a valid residence nor a valid occurrence code exists
+#'   (an unattributable record that cannot be placed in any municipality).
+#'   Callers drop the NA rows and report the count. Attributes record the
+#'   counts: `n_fallback` (rows that used occurrence), `n_unattributable` (rows
+#'   set to NA), and `n_total`. A high fallback or unattributable rate signals
+#'   numerator/denominator (residence) misalignment or dirty input.
 coalesce_muni_code <- function(residence, occurrence) {
   if (length(residence) != length(occurrence)) {
     stop("coalesce_muni_code: residence and occurrence must be equal length.")
@@ -52,14 +53,9 @@ coalesce_muni_code <- function(residence, occurrence) {
   }
   r <- valid(residence)
   o <- valid(occurrence)
-  out <- ifelse(r$ok, r$s, o$s)
-  if (any(!(r$ok | o$ok))) {
-    n <- sum(!(r$ok | o$ok))
-    stop("coalesce_muni_code: ", n, " row(s) have neither a valid residence ",
-         "nor a valid occurrence municipality code.")
-  }
-  used_fallback <- !r$ok & o$ok
-  attr(out, "n_fallback") <- sum(used_fallback)
+  out <- ifelse(r$ok, r$s, ifelse(o$ok, o$s, NA_character_))
+  attr(out, "n_fallback") <- sum(!r$ok & o$ok)
+  attr(out, "n_unattributable") <- sum(!r$ok & !o$ok)
   attr(out, "n_total") <- length(out)
   out
 }

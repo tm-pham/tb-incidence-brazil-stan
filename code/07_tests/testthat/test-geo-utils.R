@@ -19,9 +19,13 @@ test_that("coalesce_muni_code prefers residence and falls back to occurrence", {
   expect_equal(attr(out, "n_total"), 4L)
 })
 
-test_that("coalesce_muni_code errors when both codes are invalid", {
-  expect_error(coalesce_muni_code(c(NA, "999999"), c("999999", NA)),
-               "neither a valid residence")
+test_that("coalesce_muni_code returns NA and counts unattributable rows", {
+  # Both codes invalid -> NA (unattributable), not an error.
+  out <- coalesce_muni_code(c("355030", NA, "999999"),
+                            c("330455", NA, NA))
+  expect_equal(as.vector(out), c("355030", NA, NA))
+  expect_equal(attr(out, "n_unattributable"), 2L)
+  expect_equal(attr(out, "n_fallback"), 0L)
 })
 
 test_that("coalesce_muni_code errors on unequal-length inputs", {

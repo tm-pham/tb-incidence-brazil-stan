@@ -48,6 +48,20 @@ test_that("filter_tb_deaths aggregates to municipality-year and 6-digit key", {
   expect_true(all(out$muni_code < 1e6))  # reduced to 6 digits
 })
 
+test_that("filter_tb_deaths drops unattributable rows and counts them", {
+  sim <- data.table(
+    cause    = c("A150", "A150", "A150"),
+    muni_res = c("355030", NA, "999999"),    # rows 2,3 have no residence...
+    muni_occ = c("330455", NA, NA),          # ...and rows 2,3 no occurrence
+    year     = c(2018L, 2018L, 2018L)
+  )
+  out <- filter_tb_deaths(sim)
+  # Only row 1 is placeable; rows 2 and 3 are dropped (not an error).
+  expect_equal(sum(out$deaths), 1L)
+  expect_equal(out$muni_code, 355030L)
+  expect_equal(attr(out, "n_unattributable"), 2L)
+})
+
 test_that("filter_tb_deaths returns an empty typed table when nothing matches", {
   sim <- data.table(cause = "J189", muni_res = "355030",
                     muni_occ = "355030", year = 2018L)
