@@ -39,6 +39,72 @@ with logit-linear trend parameters `theta0 ~ Normal(0, 1)`,
 | regression coefficients (`phi`, `omega`) | Normal(0, 10) |
 | random-effect scales | half-Cauchy(0, 2) |
 
+## Reference implementation (retrieved 2026-06-04) — VERIFY against the PDFs
+
+Source: `mel-hc/TB_saie`, file `SpatialModel/Spatial_model.stan` (Chitwood 2022
+spatial, `chitwood2022spatial`). The repo has NO licence, so we use only the
+published model structure and prior VALUES (facts), and write our own Stan; we do
+not copy its code. The base model follows `chitwood2021bes` (Epidemics, annual),
+which may differ slightly from the 2022 spatial values below — the 2021 supplement
+is the source of truth for the base model and must be checked.
+
+Likelihood (Poisson), municipality i:
+```
+notif[i]  ~ Poisson( pop100k[i] * inc[i] * ft[i] )
+deaths[i] ~ Poisson( m_deaths[i] * p_cov[i] * (1 - death_adj[i]) )
+  m_deaths[i] = pop100k[i] * inc[i] *
+                ( ft[i]*p_mort_notif[i] + (1-ft[i])*(1 - p_surv_no_notif) )
+  p_mort_notif[i] = p_mort_mort*mort_treat[i] + p_mort_abandon*aban_treat[i]
+inc = exp(beta_inc_0 + beta_in*sigma_in + cov_in %*% betas_cov_inc)
+ft  = inv_logit(beta_ft_0 + beta_ft*sigma_ft + cov_ft %*% betas_cov_ft)
+death_adj = inv_logit(beta_0 + idc*beta_1 + theta_d*sigma_d)
+```
+
+Priors (verbatim from the reference Stan):
+
+| Parameter | Prior | Note |
+|-----------|-------|------|
+| `p_surv_no_notif` | Normal(0.3, 0.001) | untreated survival/self-cure ~0.30 -> untreated CFR ~0.70 |
+| `p_mort_mort` | Beta(28.4, 11.6) | ~0.71; death prob in the on-treatment-mortality group |
+| `p_mort_abandon` | Beta(2.14, 40.7) | ~0.05; death prob among abandoners |
+| `mort_treat[i]` | Beta(10*pri_mort_t[i], 10*(1-pri_mort_t[i])) | DATA-informed per area |
+| `aban_treat[i]` | Beta(10*pri_aban_t[i], 10*(1-pri_aban_t[i])) | DATA-informed per area |
+| `beta_inc_0`, `beta_ft_0`, `betas_cov_*` | Normal(0, 10) | regression |
+| death_adj `beta_0`, `beta_1` | Normal(0, 1) | logit-linear in `idc` |
+| `theta_d` / `sigma_d` | Normal(0,1) / Cauchy(0,2) | death-adj random effect |
+| anchor `a` (idc=0.01) | Beta(52.97, 451.15) | ~0.105 |
+| anchor `b` (idc=0.15) | Beta(97.83, 285.81) | ~0.255 |
+| `theta_in`, `theta_ft` | Normal(0,1) | BYM2 non-spatial part |
+| `rho_in`, `rho_ft` | Beta(1.5, 1.5) | BYM2 spatial-variance fraction |
+| `sigma_in`, `sigma_ft` | Cauchy(0, 2) | BYM2 scales |
+| ICAR `phi` | pairwise-difference + mean(phi) ~ Normal(0, 0.001) | soft sum-to-zero |
+
+### DISCREPANCY with the provisional table above (resolve with PI)
+
+The provisional load-bearing values at the top of this file (`mu`=0.435
+Beta(25.65,33.32); `delta`=0.05 Beta(4.29,81.47); scalar `pi`=0.90, `rho`=0.85)
+do NOT match the reference spatial model, which instead uses untreated
+survival `p_surv_no_notif`~Normal(0.3,0.001) (CFR_untreated ~0.70, not 0.565),
+a two-component treated CFR (`p_mort_mort`/`p_mort_abandon` with data-informed
+`mort_treat`/`aban_treat`), `p_cov` (= `pi`) supplied as DATA per area (not a
+scalar prior), and `death_adj` (= 1 - `rho`) as a logit-linear function of `idc`.
+The simulator and provisional priors must be reconciled to whichever the 2021
+base / 2022 spatial supplements specify.
+
+### Required DATA inputs (beyond notifications/deaths/population)
+
+The model needs these per municipality-year; flagged because our data processing
+does not yet produce them:
+
+- `p_cov` — vital-registration completeness (proportion of true deaths captured
+  by SIM). NOT computable from SIM alone; an EXTERNAL estimate (paper supplement
+  / Brazilian VR-completeness studies). **Need a source.**
+- `idc` — fraction of all-cause deaths with ill-defined (garbage) causes
+  (ICD-10 R00-R99 etc.). Computable from SIM all-cause deaths. **New loader.**
+- `pri_mort_t`, `pri_aban_t` — treatment death and abandonment fractions, from
+  SINAN closure status (`SITUA_ENCE`). Computable from the notification export.
+  **New loader.**
+
 ## Monthly extension priors (Chitwood 2025, Table S2) — for later
 
 Incidence intercept/slope ~ Normal(0, 10); fraction-detected intercept/slope ~
