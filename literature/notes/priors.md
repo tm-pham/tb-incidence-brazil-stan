@@ -45,7 +45,19 @@ The 2025 model uses a static death reporting adjustment `~ Beta(150, 50)`. For
 ill-defined-cause-of-death (IDC) covariate from Chitwood 2021, fed the actual IDC
 series for all years; anchor to external SIM coverage estimates where possible),
 or improving death registration is confounded with falling incidence and rising
-detection. The 2021 structure models it as a logit-linear function of the
+detection.
+
+> **Baseline must stay anchored (2026-06-05, from the first recovery fit).** The
+> generalisation keeps the BASELINE at the 2025 informative level and only adds
+> bounded drift. In `priors.R`, `theta0 ~ Normal(qlogis(0.75) = 1.0986, 0.20)`
+> (porting Beta(150,50), mean 0.75, to the logit scale), with `theta_time ~
+> Normal(0, 0.05)` and `theta_idc ~ Normal(0, 1)` as drift. An earlier version
+> left `theta0 ~ Normal(0, 1)`, which un-anchored the level: the recovery fit then
+> found a compensating mode where detection and the death adjustment both trended
+> the wrong way (sign-flipped `genexpert_coef`/`theta_idc`/`theta_time`, detection
+> series recovered at r=0.81). Anchoring `theta0` is the fix; do NOT widen it
+> silently. External SIM-coverage anchoring (open decision 4) would strengthen
+> this further. The 2021 structure models it as a logit-linear function of the
 poorly-defined-cause fraction, anchored by an expert-opinion survey at two
 settings:
 

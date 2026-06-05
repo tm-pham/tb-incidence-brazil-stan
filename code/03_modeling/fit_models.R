@@ -54,7 +54,7 @@ fit_base_model <- function(stan_data, seed,
                            model = NULL,
                            chains = 4L, parallel_chains = chains,
                            iter_warmup = 4000L, iter_sampling = 1000L,
-                           adapt_delta = 0.95, max_treedepth = 12L,
+                           adapt_delta = 0.99, max_treedepth = 12L,
                            inc_intercept_init = -9, refresh = 0L) {
   if (missing(seed) || is.null(seed)) {
     stop("fit_base_model: an explicit integer `seed` is required.")

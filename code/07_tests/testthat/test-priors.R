@@ -17,9 +17,13 @@ test_that("case-fatality and death-adjustment priors match the supplement", {
   expect_equal(unname(p$p_mort_aban), c(10, 190))      # death|LTFU ~0.05
   expect_equal(beta_mean(p$p_mort_nonotif), 0.565, tolerance = 1e-3)
   expect_equal(beta_mean(p$p_mort_aban), 0.05, tolerance = 1e-3)
-  # Time-varying death adjustment (Chitwood 2021 structure), and the 2025 static ref.
+  # Time-varying death adjustment: baseline anchored to the 2025 static prior
+  # (Beta(150,50), mean 0.75 -> logit 1.0986), drift terms from Chitwood 2021.
+  expect_equal(unname(p$death_adj$theta0), c(1.0986, 0.20))
   expect_equal(unname(p$death_adj$theta_time), c(0, 0.05))
   expect_equal(unname(p$death_adj$static_2025), c(150, 50))
+  expect_equal(unname(plogis(p$death_adj$theta0[["mean"]])),
+               beta_mean(p$death_adj$static_2025), tolerance = 1e-3)  # baseline ~ 0.75
 })
 
 test_that("regression priors match (incidence wide, detection tight)", {
@@ -31,9 +35,8 @@ test_that("regression priors match (incidence wide, detection tight)", {
   expect_equal(unname(p$det_coef), c(0, 1))
 })
 
-test_that("death-adjustment and GeneXpert coefficient priors are pinned", {
+test_that("death-adjustment drift and GeneXpert coefficient priors are pinned", {
   p <- priors()
-  expect_equal(unname(p$death_adj$theta0), c(0, 1))
   expect_equal(unname(p$death_adj$theta_idc), c(0, 1))
   expect_equal(unname(p$genexpert_coef), c(0, 1))
 })

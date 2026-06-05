@@ -74,6 +74,7 @@ data {
   real<lower=0> season_sd_inc;
   real<lower=0> season_sd_det;
   real<lower=0> genexpert_coef_sd;
+  real theta0_mean;                       // death-adjustment baseline (logit scale)
   real<lower=0> theta0_sd;
   real<lower=0> theta_time_sd;
   real<lower=0> theta_idc_sd;
@@ -165,7 +166,7 @@ model {
   covid_det_slope ~ normal(0, det_coef_sd);
   genexpert_coef ~ normal(0, genexpert_coef_sd);
 
-  theta0 ~ normal(0, theta0_sd);
+  theta0 ~ normal(theta0_mean, theta0_sd);
   theta_time ~ normal(0, theta_time_sd);
   theta_idc ~ normal(0, theta_idc_sd);
 

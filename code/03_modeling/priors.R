@@ -29,11 +29,19 @@ priors <- function() {
     # --- Death-reporting adjustment: TIME-VARYING logit-linear in IDC (our
     # extension of the 2025 static Beta(150,50), using the Chitwood 2021
     # structure). On the logit scale; theta_time is per YEAR. ---
+    # The BASELINE (theta0) is anchored to the 2025 static informative prior --
+    # Beta(150,50), mean 0.75 -- ported to the logit scale, so the time-varying
+    # adjustment generalises 2025 by adding bounded DRIFT (theta_time, theta_idc)
+    # rather than leaving the level free. Leaving theta0 wide (Normal(0,1)) lets
+    # the death adjustment compete with detection and breaks identification (the
+    # death channel must pin detection); see CLAUDE.md. qlogis(0.75) = 1.0986;
+    # the 2025 prior SD ~0.03 on the probability scale is ~0.16 on the logit
+    # scale, slightly widened to 0.20 to admit drift.
     death_adj = list(
-      theta0      = c(mean = 0, sd = 1),     # intercept ~ Normal(0,1)
-      theta_time  = c(mean = 0, sd = 0.05),  # per-year trend ~ Normal(0,0.05) (Chitwood 2021)
-      theta_idc   = c(mean = 0, sd = 1),     # IDC coefficient ~ Normal(0,1)
-      static_2025 = c(a = 150, b = 50)       # reference only: 2025 static Beta(150,50)
+      theta0      = c(mean = 1.0986, sd = 0.20),  # anchored to 2025 Beta(150,50) baseline
+      theta_time  = c(mean = 0, sd = 0.05),       # per-year drift ~ Normal(0,0.05) (Chitwood 2021)
+      theta_idc   = c(mean = 0, sd = 1),          # IDC coefficient ~ Normal(0,1)
+      static_2025 = c(a = 150, b = 50)            # reference: 2025 static Beta(150,50)
     ),
 
     # --- Latent-series regression priors (Chitwood 2025 Table S2) ---
