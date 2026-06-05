@@ -107,31 +107,99 @@ idc_fraction <- function(records, idc_prefix = "R") {
 
 # --- DATASUS fetch wrapper (side-effecting; runs on the Mac/cluster) --------
 
+#' Fetch and standardise one (state, year) slice of all-cause SIM-DO deaths.
+#'
+#' Targeted fetch used to fill gaps left by DATASUS FTP timeouts. Returns NULL if
+#' the slice comes back empty.
+fetch_sim_slice <- function(year, uf_abbrev) {
+  raw <- microdatasus::fetch_datasus(
+    year_start = year, year_end = year, uf = uf_abbrev,
+    information_system = "SIM-DO"
+  )
+  raw <- data.table::as.data.table(raw)
+  if (!nrow(raw)) return(NULL)
+  standardise_sim(data.table::data.table(
+    cause = raw$CAUSABAS, muni_res = raw$CODMUNRES,
+    muni_occ = raw$CODMUNOCOR, date = raw$DTOBITO
+  ))
+}
+
 #' Fetch all-cause SIM-DO deaths from DATASUS and standardise to death records.
 #'
-#' Side-effecting (network + microdatasus). We use the raw SIM-DO columns
-#' directly and SKIP microdatasus::process_sim() (it decodes unused fields and
-#' fails with "object 'tabNaturalidade' not found" on some versions). The pure
-#' aggregators filter_tb_deaths() and idc_fraction() then run on the result.
+#' Side-effecting (network + microdatasus). SELF-HEALING: starts from any cached
+#' records (`existing`), then fetches ONLY the state-years still missing, one
+#' slice at a time, so a single DATASUS FTP timeout costs one targeted re-fetch
+#' rather than the whole 20-year pull. Asserts every requested state-year is
+#' present, so a truncated download can never silently become "zero deaths"
+#' downstream (the failure mode that dropped RN 2010 on the first run).
+#'
+#' We use the raw SIM-DO columns directly and SKIP microdatasus::process_sim()
+#' (it decodes unused fields and fails on some versions). The pure aggregators
+#' filter_tb_deaths() and idc_fraction() then run on the result.
+#'
+#' NB presence detects a fully-dropped state-year (the observed failure); a
+#' partially-truncated file that still returns some rows is not caught here.
 #'
 #' @param year_start,year_end Inclusive death-year range (from DTOBITO).
-#' @param uf Optional vector of state abbreviations to restrict the pull.
-#' @return data.table of standardised all-cause death records.
-load_sim_records <- function(year_start, year_end, uf = "all") {
+#' @param uf "all" or a vector of state abbreviations to restrict the pull.
+#' @param existing Optional cached data.table from a prior (partial) run.
+#' @param uf_codes State codes expected present (the completeness grid).
+#' @return data.table of standardised all-cause death records, complete over the
+#'   requested state-year grid.
+load_sim_records <- function(year_start, year_end, uf = "all", existing = NULL,
+                             uf_codes = UF_CODES) {
   if (!requireNamespace("microdatasus", quietly = TRUE)) {
     stop("load_sim_records: package 'microdatasus' is required (run on a ",
          "machine with DATASUS access).")
   }
-  raw <- microdatasus::fetch_datasus(
-    year_start = year_start, year_end = year_end, uf = uf,
-    information_system = "SIM-DO"
-  )
-  raw <- data.table::as.data.table(raw)
-  sim <- data.table::data.table(
-    cause    = raw$CAUSABAS,
-    muni_res = raw$CODMUNRES,
-    muni_occ = raw$CODMUNOCOR,
-    date     = raw$DTOBITO
-  )
-  standardise_sim(sim)
+  # DATASUS FTP is slow; allow long single-file downloads.
+  options(timeout = max(as.numeric(getOption("timeout", 60)), 600))
+
+  expected_codes <- if (identical(uf, "all")) uf_codes else {
+    cc <- as.integer(names(UF_ABBREV)[match(uf, UF_ABBREV)])
+    if (anyNA(cc)) stop("load_sim_records: unknown state abbreviation in `uf`.")
+    cc
+  }
+  want <- data.table::CJ(uf = sort(expected_codes),
+                         year = seq.int(year_start, year_end))
+
+  out <- if (!is.null(existing) && nrow(existing)) data.table::copy(existing) else NULL
+
+  # First run with no cache: one bulk fetch (efficient); gaps patched below.
+  if (is.null(out)) {
+    raw <- microdatasus::fetch_datasus(
+      year_start = year_start, year_end = year_end, uf = uf,
+      information_system = "SIM-DO"
+    )
+    raw <- data.table::as.data.table(raw)
+    out <- standardise_sim(data.table::data.table(
+      cause = raw$CAUSABAS, muni_res = raw$CODMUNRES,
+      muni_occ = raw$CODMUNOCOR, date = raw$DTOBITO
+    ))
+  }
+
+  # Patch any missing state-years, one slice at a time.
+  missing <- want[!unique(out[, .(uf, year)]), on = c("uf", "year")]
+  for (i in seq_len(nrow(missing))) {
+    ab <- UF_ABBREV[[as.character(missing$uf[i])]]
+    message("load_sim_records: fetching missing SIM slice ", ab, " ",
+            missing$year[i], " ...")
+    slice <- tryCatch(fetch_sim_slice(missing$year[i], ab),
+                      error = function(e) {
+                        message("  fetch failed: ", conditionMessage(e)); NULL
+                      })
+    if (!is.null(slice) && nrow(slice)) {
+      out <- data.table::rbindlist(list(out, slice), use.names = TRUE)
+    }
+  }
+
+  still <- want[!unique(out[, .(uf, year)]), on = c("uf", "year")]
+  if (nrow(still)) {
+    stop("load_sim_records: SIM still missing ", nrow(still),
+         " state-year(s) after fetch (DATASUS FTP timeouts). First: uf ",
+         still$uf[1L], " ", still$year[1L],
+         ". Re-run to retry; the cache is preserved.")
+  }
+  data.table::setorder(out, uf, year, month)
+  out[]
 }

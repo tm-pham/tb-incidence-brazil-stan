@@ -76,6 +76,15 @@ UF_CODES <- c(11L, 12L, 13L, 14L, 15L, 16L, 17L,          # North
               41L, 42L, 43L,                               # South
               50L, 51L, 52L, 53L)                          # Centre-West
 
+# 2-digit UF code -> postal abbreviation, for targeted DATASUS fetches
+# (microdatasus::fetch_datasus takes state abbreviations, not codes).
+UF_ABBREV <- c(`11` = "RO", `12` = "AC", `13` = "AM", `14` = "RR", `15` = "PA",
+               `16` = "AP", `17` = "TO", `21` = "MA", `22` = "PI", `23` = "CE",
+               `24` = "RN", `25` = "PB", `26` = "PE", `27` = "AL", `28` = "SE",
+               `29` = "BA", `31` = "MG", `32` = "ES", `33` = "RJ", `35` = "SP",
+               `41` = "PR", `42` = "SC", `43` = "RS", `50` = "MS", `51` = "MT",
+               `52` = "GO", `53` = "DF")
+
 # COVID structural break (level + slope change with recovery) at April 2020.
 COVID_BREAK_YEAR  <- 2020L
 COVID_BREAK_MONTH <- 4L

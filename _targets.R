@@ -54,8 +54,10 @@ list(
   # both the TB-death counts and the ill-defined-cause fraction.
   tar_target(sim_records_file, {
     dir.create(DATA_INTERIM, recursive = TRUE, showWarnings = FALSE)
-    d <- load_sim_records(year_start, year_end, uf = uf)
-    p <- file.path(DATA_INTERIM, "sim_records.rds"); saveRDS(d, p); p
+    p <- file.path(DATA_INTERIM, "sim_records.rds")
+    existing <- if (file.exists(p)) readRDS(p) else NULL  # self-heal from cache
+    d <- load_sim_records(year_start, year_end, uf = uf, existing = existing)
+    saveRDS(d, p); p
   }, format = "file"),
   tar_target(sim_records, readRDS(sim_records_file)),
   tar_target(tb_deaths, filter_tb_deaths(sim_records, TB_DEATH_ICD3)),
