@@ -1,229 +1,185 @@
 # simulate.R
-# Generative simulator for the annual evidence-synthesis process (Chitwood 2021),
-# the same data-generating process the base Stan model (tb_incidence_base.stan)
-# assumes. Backbone of the recovery test and of data/synthetic/.
+# Generative simulator for the MONTHLY, state-level TB natural-history process
+# (Chitwood 2025 + project extensions). This is the data-generating process the
+# Stan model (code/03_modeling/stan/tb_state_month.stan) must match exactly; it
+# is the backbone of the recovery test and of data/synthetic/.
 #
-# Side-effect free: no file I/O, no global RNG state (seeds are scoped with
-# withr::with_seed). Scripts and _targets.R do the reading, writing, and calling.
+# Process (discrete monthly, per state), on an extended axis with a pre-window:
+#   lambda_t  = exp( inc_intercept + B_trend beta + S_season s + COVID )    [infections, per-capita]
+#   gamma_t   = conv(lambda, phi_lambda)                                    [symptomatic = "incidence"]
+#   delta_t   = invlogit( det_intercept + B_trend b + S_season s + COVID + genexpert )
+#   detect_t  = conv(gamma, phi_gamma)
+#   Notified  = delta * detect ;  Missed = (1-delta) * detect
+#   DeadNotif = Notified * (pri_mort_t + pri_aban_t * p_mort_aban)
+#   AllDeaths = conv(DeadNotif, phi_mort) + conv(Missed * p_mort_nonotif, phi_mort)
+#   DeathAdj_t= invlogit( theta0 + theta_time*year + theta_idc*idc_t )       [time-varying, our extension]
+#   SINAN_t ~ Poisson( pop_t * Notified_t )
+#   SIM_t   ~ Poisson( pop_t * AllDeaths_t * DeathAdj_t )
 #
-# Likelihood, for municipality i and year j (population gamma = person-time,
-# incidence rate alpha, fraction treated beta):
-#
-#   Notifications ~ Poisson( gamma * alpha * beta )
-#   Deaths        ~ Poisson( gamma * alpha *
-#       { beta * P(death|treated) + (1 - beta) * P(death|untreated) } * pi * rho )
-#
-# with
-#   P(death|untreated) = 1 - mu                       (mu = survival untreated)
-#   P(death|treated)   = p_death_tx + p_ltfu * delta  (SINAN treatment outcomes,
-#                        deaths among the lost-to-follow-up governed by delta)
-#   pi  = SIM mortality-system coverage
-#   rho = adjustment for under-reporting of TB deaths
-#
-# These natural-history parameters (delta, mu, pi, rho) are load bearing; the
-# defaults below sit at the Chitwood 2021 prior means and must not be weakened
-# silently. See code/03_modeling/priors.R and literature/notes/priors.md.
+# Side-effect free: no file I/O; RNG seeds scoped with withr::with_seed.
 
-# --- Natural-history parameters --------------------------------------------
+source(here::here("code", "01_functions", "delays.R"))
+source(here::here("code", "01_functions", "basis.R"))
+source(here::here("code", "03_modeling", "priors.R"))
 
-#' Build and validate the natural-history parameter set.
+#' Simulate one state's monthly notification and death counts.
 #'
-#' Only `mu`, `delta`, `pi`, and `rho` are the load-bearing identifying priors
-#' (see CLAUDE.md); their defaults are the Chitwood 2021 prior means (`mu` and
-#' `delta` are confirmed to match the Beta means; `pi` and `rho` are provisional
-#' central values pending verification against the supplement, see
-#' literature/notes/priors.md). `p_death_tx` (deaths on treatment) and `p_ltfu`
-#' (fraction lost to follow-up) are NOT priors: they stand in for SINAN-observed
-#' treatment outcomes and in the real model vary by area and time. `delta` is the
-#' only estimated piece of the treated case-fatality.
-#'
-#' `pi` and `rho` are held as scalars here. They enter the death mean only as the
-#' product `pi * rho` and so are jointly identified only through their priors;
-#' `simulate_tb_counts()` accepts area-varying `pi`/`rho` vectors for when the
-#' poorly-defined-cause regression on `rho` is added (Phase 4). See the open
-#' decisions in literature/notes/priors.md.
-#'
-#' @return A list with the inputs plus derived case-fatality ratios
-#'   `cfr_treated` and `cfr_untreated`.
-tb_natural_history <- function(mu = 0.435,      # Beta(25.65, 33.32) mean
-                               delta = 0.050,    # Beta(4.29, 81.47) mean
-                               p_death_tx = 0.050,
-                               p_ltfu = 0.100,
-                               pi = 0.900,       # SIM coverage
-                               rho = 0.850) {    # death under-reporting adj.
-  probs <- c(mu = mu, delta = delta, p_death_tx = p_death_tx,
-             p_ltfu = p_ltfu, pi = pi, rho = rho)
-  if (any(!is.finite(probs)) || any(probs < 0) || any(probs > 1)) {
-    stop("All natural-history parameters must be finite probabilities in [0, 1].")
-  }
-  cfr_treated   <- p_death_tx + p_ltfu * delta
-  cfr_untreated <- 1 - mu
-  if (cfr_treated > 1) {
-    stop("Implied P(death | treated) exceeds 1; check p_death_tx, p_ltfu, delta.")
-  }
-  c(as.list(probs), list(cfr_treated = cfr_treated, cfr_untreated = cfr_untreated))
-}
+#' @param design Output of `build_design()` (extended axis + bases).
+#' @param kernels Output of `build_delay_kernels()`.
+#' @param params Named list of TRUE parameter values (see `default_true_params`).
+#' @param covariates Named list of length-`n_obs` vectors: population, idc,
+#'   genexpert, pri_mort_t, pri_aban_t.
+#' @param seed Optional integer; if given, Poisson draws are reproducible.
+#' @return data.table with month, notifications, deaths, the offset, and the true
+#'   latent series (lambda, gamma, delta, death_adj) for recovery checks.
+simulate_state_month <- function(design, kernels, params, covariates,
+                                 seed = NULL) {
+  n_total <- design$n_total; n_pre <- design$n_pre; n_obs <- design$n_obs
+  obs_rows <- (n_pre + 1L):n_total
+  stopifnot(length(covariates$population) == n_obs)
 
-# --- Draw counts given rates (must match the Stan likelihood) ---------------
+  pre <- function(v, fill) c(rep(fill, n_pre), v)   # extend a covariate backward
+  gx_ext    <- pre(covariates$genexpert, 0)         # no Xpert in the pre-window
+  pmort_ext <- pre(covariates$pri_mort_t, covariates$pri_mort_t[1L])
+  paban_ext <- pre(covariates$pri_aban_t, covariates$pri_aban_t[1L])
 
-#' Draw notifications and deaths given known rates and natural history.
-#'
-#' This is the function that must stay identical to the Stan likelihood. Given
-#' population (person-time), incidence rate alpha, and fraction treated beta, it
-#' returns the expected means and one Poisson draw of each count.
-#'
-#' @param population Numeric vector, person-time denominator (gamma) > 0.
-#' @param alpha Numeric vector, incidence rate per person-time, > 0.
-#' @param beta Numeric vector, fraction treated, in [0, 1].
-#' @param nat Natural-history list from `tb_natural_history()`.
-#' @param seed Integer seed; RNG state is scoped, not set globally.
-#' @return A data.table with rates, expected means, and the integer draws.
-simulate_tb_counts <- function(population, alpha, beta,
-                               nat = tb_natural_history(), seed = 1L) {
-  n <- length(population)
-  if (length(alpha) != n || length(beta) != n) {
-    stop("population, alpha, and beta must have the same length.")
-  }
-  if (any(!is.finite(population)) || any(population <= 0)) {
-    stop("population must be finite and positive.")
-  }
-  if (any(!is.finite(alpha)) || any(alpha <= 0)) {
-    stop("alpha must be finite and positive.")
-  }
-  if (any(!is.finite(beta)) || any(beta < 0) || any(beta > 1)) {
-    stop("beta must be in [0, 1].")
+  # Latent per-capita infection rate on the extended axis, then symptomatic.
+  loglam <- params$inc_intercept +
+    as.numeric(design$B_trend %*% params$beta_trend_inc) +
+    as.numeric(design$S_season %*% params$beta_season_inc) +
+    params$covid_inc_level * design$covid_level +
+    params$covid_inc_slope * design$covid_slope
+  lambda <- exp(loglam)
+  gamma  <- causal_convolve(lambda, kernels$phi_lambda)
+
+  # Detection probability.
+  logit_delta <- params$det_intercept +
+    as.numeric(design$B_trend %*% params$beta_trend_det) +
+    as.numeric(design$S_season %*% params$beta_season_det) +
+    params$covid_det_level * design$covid_level +
+    params$covid_det_slope * design$covid_slope +
+    params$genexpert_coef * gx_ext
+  delta <- stats::plogis(logit_delta)
+
+  detectable <- causal_convolve(gamma, kernels$phi_gamma)
+  notified <- delta * detectable
+  missed   <- (1 - delta) * detectable
+
+  dead_notif <- notified * (pmort_ext + paban_ext * params$p_mort_aban)
+  alldeaths  <- causal_convolve(dead_notif, kernels$phi_mort) +
+    causal_convolve(missed * params$p_mort_nonotif, kernels$phi_mort)
+
+  # Time-varying death-reporting adjustment (observed months; time in years).
+  year_idx  <- (seq_len(n_obs) - 1) / 12
+  death_adj <- stats::plogis(params$theta0 + params$theta_time * year_idx +
+                               params$theta_idc * covariates$idc)
+
+  exp_notif  <- covariates$population * notified[obs_rows]
+  exp_deaths <- covariates$population * alldeaths[obs_rows] * death_adj
+  if (any(!is.finite(exp_notif)) || any(!is.finite(exp_deaths)) ||
+      any(exp_notif < 0) || any(exp_deaths < 0)) {
+    stop("simulate_state_month: non-finite/negative expected counts; check params.")
   }
 
-  death_per_case <- beta * nat$cfr_treated + (1 - beta) * nat$cfr_untreated
-  notif_mean <- population * alpha * beta
-  death_mean <- population * alpha * death_per_case * nat$pi * nat$rho
-
-  draws <- withr::with_seed(seed, {
-    list(
-      notifications = stats::rpois(n, notif_mean),
-      deaths        = stats::rpois(n, death_mean)
-    )
-  })
+  draw <- function() list(n = stats::rpois(n_obs, exp_notif),
+                          d = stats::rpois(n_obs, exp_deaths))
+  out <- if (is.null(seed)) draw() else withr::with_seed(seed, draw())
 
   data.table::data.table(
-    population     = population,
-    alpha          = alpha,
-    beta           = beta,
-    death_per_case = death_per_case,
-    notif_mean     = notif_mean,
-    death_mean     = death_mean,
-    notifications  = draws$notifications,
-    deaths         = draws$deaths
+    month = seq_len(n_obs),
+    notifications = as.integer(out$n),
+    deaths = as.integer(out$d),
+    population = covariates$population,
+    idc = covariates$idc, genexpert = covariates$genexpert,
+    pri_mort_t = covariates$pri_mort_t, pri_aban_t = covariates$pri_aban_t,
+    true_lambda = lambda[obs_rows], true_gamma = gamma[obs_rows],
+    true_delta = delta[obs_rows], true_death_adj = death_adj,
+    exp_notif = exp_notif, exp_deaths = exp_deaths
   )
 }
 
-# --- Generate a full hierarchical synthetic dataset -------------------------
+#' Plausible TRUE parameters that produce realistic monthly counts.
+#'
+#' The incidence intercept is set on the per-capita log scale (~ -9.6 gives a
+#' few hundred monthly symptomatic cases per 1e6 people); spline/seasonal
+#' coefficients are small, seeded perturbations. NOT drawn from the wide fitting
+#' priors (those let the data speak; here we need realistic synthetic truth).
+#'
+#' @param design Output of `build_design()`.
+#' @param seed Integer seed.
+#' @return A named list consumable by `simulate_state_month()`.
+default_true_params <- function(design, seed = 1L) {
+  K <- ncol(design$B_trend); H2 <- ncol(design$S_season)
+  withr::with_seed(seed, list(
+    inc_intercept   = -9.6,
+    beta_trend_inc  = cumsum(stats::rnorm(K, 0, 0.12)),
+    beta_season_inc = stats::rnorm(H2, 0, 0.05),
+    covid_inc_level = -0.15, covid_inc_slope = 0.002,
+    det_intercept   = 0.3,
+    beta_trend_det  = cumsum(stats::rnorm(K, 0, 0.08)),
+    beta_season_det = stats::rnorm(H2, 0, 0.03),
+    covid_det_level = -0.20, covid_det_slope = 0.003,
+    genexpert_coef  = 0.5,
+    theta0 = 1.0, theta_time = 0.02, theta_idc = -1.5,
+    p_mort_aban = 0.05, p_mort_nonotif = 0.565
+  ))
+}
 
-#' Simulate a municipality-by-year TB dataset from the evidence-synthesis model.
+#' Synthetic state-month covariates with realistic shapes (IDC falling,
+#' GeneXpert ~0 pre-2014 then rising), for synthetic data and recovery tests.
 #'
-#' Builds the area-time structure the base model assumes:
-#'   log alpha = phi0  + u_i + w_j + X %*% phi   (incidence rate)
-#'   logit beta = omega0 + v_i + s_j + X %*% omega (fraction treated)
-#' with demeaned area effects (u_i, v_i) and demeaned random-walk year effects
-#' (w_j, s_j), and area-level covariates X (standardised FHS coverage and log
-#' GDP per capita). Then draws counts via `simulate_tb_counts()`.
+#' @param n_obs Observed months.
+#' @param population Constant state population (person-time offset).
+#' @return Named list of length-`n_obs` covariate vectors.
+synthetic_covariates <- function(n_obs, population = 1e6) {
+  yr <- (seq_len(n_obs) - 1) / 12
+  list(
+    population  = rep(population, n_obs),
+    idc         = 0.16 * exp(-0.12 * yr) + 0.04,        # 0.20 -> ~0.04
+    genexpert   = stats::plogis((yr - 11) * 0.8) * 0.6, # ~0 before ~2014, rising
+    pri_mort_t  = rep(0.04, n_obs),
+    pri_aban_t  = rep(0.10, n_obs)
+  )
+}
+
+#' Default pre-window length: the total delay-kernel support, so the
+#' convolutions are complete for every observed month.
+default_n_pre <- function(pr = priors()) {
+  d <- pr$delays
+  as.integer(d$lambda_max + d$gamma_max + d$mort_max)
+}
+
+#' Simulate a multi-state synthetic dataset (for synthetic data + recovery).
 #'
-#' Returns both the observable `data` and the `truth` (true alpha, beta, and the
-#' parameters) so the recovery test can check interval coverage.
-#'
-#' @param n_areas Number of municipalities.
-#' @param n_years Number of years.
-#' @param phi0,omega0 Intercepts for log incidence and logit fraction treated.
-#' @param phi,omega Length-2 covariate coefficient vectors (FHS, log GDP).
-#' @param sigma_area_alpha,sigma_area_beta Area random-effect SDs.
-#' @param sigma_rw_alpha,sigma_rw_beta Year random-walk step SDs.
-#' @param nat Natural-history list from `tb_natural_history()`.
-#' @param pop_meanlog,pop_sdlog Lognormal parameters for the baseline (first
-#'   year) area population. The generated population is continuous person-time
-#'   (the `gamma` offset), not an integer headcount.
-#' @param pop_growth_sd SD of the per-area annual log-growth rate. Population
-#'   then varies by area AND year (intercensal-estimate style), so the synthetic
-#'   data exercises year-aligned denominators in the Stan data assembly.
-#' @param seed Integer seed (scoped).
-simulate_tb_dataset <- function(n_areas = 100L, n_years = 5L,
-                                phi0 = -7.8, omega0 = 1.7,
-                                phi = c(-0.10, -0.15),
-                                omega = c(0.20, 0.10),
-                                sigma_area_alpha = 0.30,
-                                sigma_area_beta = 0.25,
-                                sigma_rw_alpha = 0.05,
-                                sigma_rw_beta = 0.05,
-                                nat = tb_natural_history(),
-                                pop_meanlog = 10.0, pop_sdlog = 1.0,
-                                pop_growth_sd = 0.01,
-                                seed = 1L) {
-  if (n_areas < 1L || n_years < 1L) stop("n_areas and n_years must be >= 1.")
-  if (length(phi) != 2L || length(omega) != 2L) {
-    stop("phi and omega must each be length 2 (FHS coverage, log GDP).")
+#' @param n_states Number of states.
+#' @param n_obs Observed months per state.
+#' @param start_month_of_year Calendar month of observed month 1.
+#' @param covid_break Observed-month index of the COVID break.
+#' @param n_trend_knots,n_harmonics Basis sizes (must match the Stan model).
+#' @param seed Master seed.
+#' @return list(panel = data.table(uf, month, ...), design, kernels,
+#'   params_by_state, priors).
+simulate_tb_dataset <- function(n_states = 3L, n_obs = 252L,
+                                start_month_of_year = 1L, covid_break = 208L,
+                                n_trend_knots = 8L, n_harmonics = 2L,
+                                seed = 20240603L) {
+  pr <- priors()
+  kernels <- build_delay_kernels(pr$delays)
+  n_pre <- default_n_pre(pr)
+  design <- build_design(n_obs, n_pre, start_month_of_year, covid_break,
+                         n_trend_knots, n_harmonics)
+  params_by_state <- vector("list", n_states)
+  rows <- vector("list", n_states)
+  for (s in seq_len(n_states)) {
+    params <- default_true_params(design, seed = seed + s)
+    params$inc_intercept <- params$inc_intercept +
+      withr::with_seed(seed + 200L + s, stats::runif(1L, -0.3, 0.3))
+    cov <- synthetic_covariates(n_obs, population = 1e6 + s * 2e5)
+    d <- simulate_state_month(design, kernels, params, cov, seed = seed + 100L + s)
+    d[, uf := s]
+    params_by_state[[s]] <- params
+    rows[[s]] <- d
   }
-
-  built <- withr::with_seed(seed, {
-    # Area-level covariates (standardised) and baseline (year 1) population.
-    X <- cbind(fhs = stats::rnorm(n_areas), log_gdp = stats::rnorm(n_areas))
-    population_area <- stats::rlnorm(n_areas, meanlog = pop_meanlog,
-                                     sdlog = pop_sdlog)
-    # Per-area annual log-growth rate so population varies by area and year.
-    growth <- stats::rnorm(n_areas, mean = 0, sd = pop_growth_sd)
-
-    # Demeaned area random effects.
-    u <- stats::rnorm(n_areas, sd = sigma_area_alpha); u <- u - mean(u)
-    v <- stats::rnorm(n_areas, sd = sigma_area_beta);  v <- v - mean(v)
-
-    # Random-walk year effects, demeaned.
-    rw <- function(sd) {
-      e <- cumsum(c(0, stats::rnorm(n_years - 1L, sd = sd)))
-      e - mean(e)
-    }
-    w <- rw(sigma_rw_alpha)
-    s <- rw(sigma_rw_beta)
-    list(X = X, population_area = population_area, growth = growth,
-         u = u, v = v, w = w, s = s)
-  })
-
-  grid <- data.table::CJ(area = seq_len(n_areas), year = seq_len(n_years))
-  data.table::set(grid, j = "fhs",     value = built$X[grid$area, "fhs"])
-  data.table::set(grid, j = "log_gdp", value = built$X[grid$area, "log_gdp"])
-  # Population is year-specific: baseline grown at the area's annual rate.
-  data.table::set(grid, j = "population",
-                  value = built$population_area[grid$area] *
-                    exp(built$growth[grid$area] * (grid$year - 1L)))
-
-  lin_alpha <- phi0 + built$u[grid$area] + built$w[grid$year] +
-    built$X[grid$area, "fhs"] * phi[1] + built$X[grid$area, "log_gdp"] * phi[2]
-  lin_beta <- omega0 + built$v[grid$area] + built$s[grid$year] +
-    built$X[grid$area, "fhs"] * omega[1] + built$X[grid$area, "log_gdp"] * omega[2]
-
-  alpha <- exp(lin_alpha)
-  beta  <- stats::plogis(lin_beta)
-
-  # Use a derived seed so the count draws are reproducible but distinct from the
-  # structure draws.
-  counts <- simulate_tb_counts(grid$population, alpha, beta, nat = nat,
-                               seed = seed + 1L)
-
-  data <- data.table::data.table(
-    area          = grid$area,
-    year          = grid$year,
-    population    = grid$population,
-    fhs           = grid$fhs,
-    log_gdp       = grid$log_gdp,
-    notifications = counts$notifications,
-    deaths        = counts$deaths
-  )
-
-  truth <- list(
-    alpha = alpha, beta = beta,
-    phi0 = phi0, omega0 = omega0, phi = phi, omega = omega,
-    sigma_area_alpha = sigma_area_alpha, sigma_area_beta = sigma_area_beta,
-    sigma_rw_alpha = sigma_rw_alpha, sigma_rw_beta = sigma_rw_beta,
-    nat = nat,
-    notif_mean = counts$notif_mean, death_mean = counts$death_mean
-  )
-
-  list(data = data, truth = truth)
+  list(panel = data.table::rbindlist(rows), design = design, kernels = kernels,
+       params_by_state = params_by_state, priors = pr)
 }
