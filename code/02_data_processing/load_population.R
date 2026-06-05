@@ -93,11 +93,16 @@ expand_population_monthly <- function(annual, year_start, year_end,
 #' Fetch annual state population estimates from IBGE (SIDRA) and standardise.
 #'
 #' Side-effecting (network + sidrar). Not unit tested; the testable logic lives
-#' in tidy_state_population() / expand_population_monthly(). Confirm the SIDRA
-#' table and column names against the installed sidrar version: SIDRA 6579
-#' ("Populacao residente estimada") aggregated to UF, with census years
-#' substituted from the census tables if exact alignment is wanted (2000/2010/
-#' 2022; note the 2022 revision).
+#' in tidy_state_population() / expand_population_monthly(). SIDRA returns
+#' accented Portuguese column labels that vary by table/version, so the UF / year
+#' / value columns are located by PATTERN rather than hard-coded names.
+#'
+#' Caveats (Brazilian population is assembled across censuses):
+#'   * Table 6579 ("Estimativas de Populacao") covers non-census years; census
+#'     years (2010, 2022) are excluded and are interpolated by
+#'     expand_population_monthly() from the surrounding anchors. Years past the
+#'     table's range (often 2022-2023) are held constant by rule=2 there. Both
+#'     are approximations to refine with the 2022 census + 2023 estimate.
 #'
 #' @param years Integer vector of years.
 #' @return data.table(uf, year, population) via tidy_state_population().
@@ -110,12 +115,32 @@ load_ibge_state_population <- function(years) {
     x = 6579, variable = 9324, period = as.character(years), geo = "State"
   )
   raw <- data.table::as.data.table(raw)
-  # SIDRA returns Portuguese labels; map to the contract. Confirm against the
-  # installed sidrar output.
-  tidy_state_population(
-    raw,
-    uf_col    = "Unidade da Federacao (Codigo)",
-    year_col  = "Ano",
-    value_col = "Valor"
-  )
+  nms <- names(raw)
+
+  pick <- function(patterns, what) {
+    for (p in patterns) {
+      hit <- grep(p, nms, value = TRUE, ignore.case = TRUE)
+      if (length(hit)) return(hit[1L])
+    }
+    stop("load_ibge_state_population: could not find the ", what, " column in ",
+         "the sidrar output. Columns returned were:\n  ",
+         paste(nms, collapse = "\n  "))
+  }
+  # UF code: "Unidade da Federacao (Codigo)" (accents/cedilla vary). Prefer the
+  # CODE column over the name column.
+  uf_col   <- pick(c("Federa.*[CC].?dig", "Unidade da Federa"), "UF code")
+  year_col <- pick(c("^Ano$", "Ano$"), "year")
+  val_col  <- pick(c("^Valor$", "Valor"), "value")
+
+  out <- tidy_state_population(raw, uf_col = uf_col, year_col = year_col,
+                               value_col = val_col)
+  # Drop any non-state aggregate (e.g. a "Brasil" total) defensively.
+  out <- out[uf >= 11L & uf <= 53L]
+  miss_years <- setdiff(years, unique(out$year))
+  if (length(miss_years)) {
+    message("load_ibge_state_population: table 6579 returned no rows for ",
+            "year(s) ", paste(miss_years, collapse = ", "),
+            " (census years are excluded; these are interpolated/held downstream).")
+  }
+  out[]
 }
