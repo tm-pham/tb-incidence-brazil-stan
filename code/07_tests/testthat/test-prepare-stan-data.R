@@ -91,6 +91,71 @@ test_that("a count outside the grid errors (orphan)", {
                "outside the grid")
 })
 
+test_that("COVID level/slope are correct when the break is inside the window", {
+  ufs <- c(35L, 33L)
+  pop <- CJ(uf = ufs, year = 2019:2021, month = 1:12)[, population := 1e6][]
+  notif <- data.table(uf = integer(), year = integer(), month = integer(),
+                      notifications = integer())
+  dth <- data.table(uf = integer(), year = integer(), month = integer(),
+                    deaths = integer())
+  out <- prepare_stan_data(notif, dth, pop, year_start = 2019L, year_end = 2021L,
+                           uf_codes = ufs, covid_break_year = 2020L,
+                           covid_break_month = 4L)
+  p <- out$panel[uf == 35L][order(year, month)]
+  # Apr 2020 .. Dec 2021 = 9 + 12 = 21 post-break months.
+  expect_equal(sum(p$covid_level), 21L)
+  expect_equal(p[year == 2020L & month == 3L, covid_level], 0L)
+  expect_equal(p[year == 2020L & month == 4L, covid_level], 1L)
+  expect_equal(p[covid_level == 1L, covid_slope], 1:21)
+  expect_true(all(p[covid_level == 0L, covid_slope] == 0L))
+})
+
+test_that("treatment covariates join and report missing", {
+  pop <- make_pop()
+  notif <- data.table(uf = 35L, year = 2018L, month = 3L, notifications = 10L)
+  dth <- data.table(uf = integer(), year = integer(), month = integer(),
+                    deaths = integer())
+  trt <- data.table(uf = 35L, year = 2018L, month = 3L,
+                    pri_mort_t = 0.04, pri_aban_t = 0.1)
+  out <- do.call(prepare_stan_data, c(list(notif, dth, pop), args0(treatment = trt)))
+  expect_equal(out$panel[uf == 35L & year == 2018L & month == 3L, pri_mort_t], 0.04)
+  expect_equal(out$report$treatment_missing, 2L * 24L - 1L)
+})
+
+test_that("deaths are integer and the zero-fill count is reported", {
+  pop <- make_pop()
+  notif <- data.table(uf = integer(), year = integer(), month = integer(),
+                      notifications = integer())
+  dth <- data.table(uf = 35L, year = 2018L, month = 3L, deaths = 4L)
+  out <- do.call(prepare_stan_data, c(list(notif, dth, pop), args0()))
+  expect_true(is.integer(out$panel$deaths))
+  expect_equal(out$report$deaths_zero_filled, 2L * 24L - 1L)
+})
+
+test_that("the grid-size guard fails loudly on a wrong grid", {
+  pop <- make_pop()
+  notif <- data.table(uf = integer(), year = integer(), month = integer(),
+                      notifications = integer())
+  dth <- data.table(uf = integer(), year = integer(), month = integer(),
+                    deaths = integer())
+  expect_error(
+    do.call(prepare_stan_data, c(list(notif, dth, pop), args0(expect_n_states = 27L))),
+    "expected 27 states")
+  expect_error(
+    do.call(prepare_stan_data, c(list(notif, dth, pop), args0(expect_n_months = 252L))),
+    "expected 252 months")
+})
+
+test_that("stan_data_for_state errors on an unknown state", {
+  pop <- make_pop()
+  notif <- data.table(uf = integer(), year = integer(), month = integer(),
+                      notifications = integer())
+  dth <- data.table(uf = integer(), year = integer(), month = integer(),
+                    deaths = integer())
+  out <- do.call(prepare_stan_data, c(list(notif, dth, pop), args0()))
+  expect_error(stan_data_for_state(out, 99L), "no rows for uf")
+})
+
 test_that("stan_data_for_state slices one state's 252-month series", {
   pop <- make_pop()
   notif <- data.table(uf = 35L, year = 2018L, month = 3L, notifications = 7L)

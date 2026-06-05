@@ -68,9 +68,25 @@ panel_diagnostics <- function(assembled, genexpert_era_year = 2014L,
   }
 
   # --- Covariate trajectories (the load-bearing time-varying signal) -------
-  trend <- p[, .(idc = mean(idc), genexpert = mean(genexpert_share),
-                 notif = sum(notifications), deaths = sum(deaths)),
-             by = year][order(year)]
+  # Report NA covariate cells loudly (NA would otherwise silently null out the
+  # trend means and suppress these flags). Aggregate the national trend with the
+  # right weights: death-weighted IDC (small high-IDC states must not dominate)
+  # and notification-weighted GeneXpert share. Death-weighted IDC uses
+  # idc * allcause_deaths / sum(allcause_deaths) when all-cause is carried.
+  n_idc_na <- sum(is.na(p$idc))
+  n_gx_na  <- sum(is.na(p$genexpert_share))
+  add(n_idc_na > 0, sprintf("%d idc NA cell(s) in the panel (check SIM coverage)", n_idc_na))
+  add(n_gx_na > 0, sprintf("%d genexpert_share NA cell(s) (expected only where a state-month has no notifications)", n_gx_na))
+  has_ac <- "allcause_deaths" %in% names(p)
+  trend <- p[, {
+    idc_w <- if (has_ac) sum(idc * allcause_deaths, na.rm = TRUE) /
+                         sum(allcause_deaths, na.rm = TRUE)
+             else mean(idc, na.rm = TRUE)
+    list(idc = idc_w,
+         genexpert = stats::weighted.mean(genexpert_share,
+                                          w = pmax(notifications, 1L), na.rm = TRUE),
+         notif = sum(notifications), deaths = sum(deaths))
+  }, by = year][order(year)]
   idc_first <- trend[year == min(year), idc]
   idc_last  <- trend[year == max(year), idc]
   add(!(idc_last < idc_first), sprintf(

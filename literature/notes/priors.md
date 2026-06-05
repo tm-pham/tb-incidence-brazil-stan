@@ -176,6 +176,56 @@ These are load-bearing and depend on values not yet available in this container.
 4. **External SIM coverage source.** A `p_cov`/completeness series to anchor the
    death adjustment is not derivable from SIM alone; needs an external source.
 
+### Raised by the 2026-06-05 five-reviewer review (need PI sign-off)
+
+5. **GeneXpert numerator: "performed" (TEST_MOLEC 1-4) vs "detected" (1-2).**
+   Current code uses performed (any result exists) as a capacity proxy, which is
+   defensible for a detection-capacity covariate; "detected" would track the TB
+   case-mix/positivity and is endogenous. Confirm "performed". Interpret the
+   coefficient as capacity, not positivity. (epidemiology H1 / data_integrity M1)
+6. **Treatment-outcome code sets + cohort dating.** `treatment_outcomes()` uses
+   death = SITUA_ENCE {3,4}, abandonment = {2,10}; confirm against the SINAN-TB
+   dictionary (esp. code 10 = primary abandonment) and the 2025/2022 definitions.
+   Cohort is dated by DT_DIAG (notification month); the supplement keys treated
+   deaths on notification date too (Chitwood 2025 Eq. 6), so DT_DIAG is
+   consistent — confirm. These feed Pr[Mort]/Pr[Aban] as DATA (not priors) in the
+   2025 model. (epidemiology H2 / data_integrity H2,H3)
+7. **IDC garbage-code set.** Currently ICD-10 R00-R99 (`IDC_ICD_PREFIX = "R"`).
+   Confirm against the death-adjustment anchor calibration; some Brazilian
+   "causas mal definidas" definitions add non-R codes. (data_integrity M4)
+8. **Population census backbone + 2023 estimate.** Confirm SIDRA 6579 is already
+   back-revised to the 2000/2010 censuses (else add those anchors); the 2022
+   census is spliced in but 2011-2021 may sit on the un-revised projection, and
+   2023 is currently held flat at 2022 — pull the 2023 estimate. (data_integrity
+   H1 / epidemiology M1,M2)
+9. **Reproducibility pin (not a model decision, but blocking phase close).**
+   `renv.lock` Packages block is empty; run `renv::snapshot()` on the populated
+   library and commit, and record the cmdstan version with the fit. (repro H2)
+
+### 2025 model structure now confirmed (supplement read 2026-06-05)
+
+The Chitwood 2025 supplement is now in `literature/private_pdfs/`. Confirmed: a
+discrete monthly, per-state Poisson convolution model. Incidence (infections)
+`lambda_t = exp(linear trend + COVID change point)`; symptomatic
+`gamma_t = conv(lambda, phi_lambda)`; detection `delta_t = invlogit(linear +
+COVID)`; `Notified_t = delta_t * conv(gamma, phi_gamma)`; deaths via
+`conv(., phi_mort)`. Fixed delay kernels: phi_lambda = Weibull(shape 1.75, scale
+25) infection->symptom (mean 22.25 mo); phi_gamma = Gamma(shape 10, rate 4)
+symptom->detectable (mean 2.5 mo); phi_mort = Gamma(shape 12, rate 3)
+detectable->death (mean 4 mo). Likelihood `SINAN_t ~ Poisson(pop_t * Notified_t)`,
+`SIM_t ~ Poisson(pop_t * AllDeaths_t * DeathAdj)`. Priors: `Pr[Mort|NoNotif] ~
+Beta(113,87)` (untreated CFR ~0.565), `Pr[Mort|Aban] ~ Beta(10,190)` (note Table
+S2 SD 0.15 is a typo for 0.015), `DeathAdj ~ Beta(150,50)` (static pre/post in
+2025), incidence `alpha/beta ~ Normal(0,10)`, detection `alpha/beta ~ Normal(0,1)`.
+2025 used 2016-2021, a single linear trend + one April-2020 change point (level +
+slope), a STATIC death adjustment, NO seasonality, and NO GeneXpert/IDC covariate.
+Per-state Stan, 4 chains x 5000 (4000 warmup), thin 4; AR-1 and joint-hierarchical
+both tried and rejected (non-convergence). **Our extensions:** 2003-2023; smooth
+RW2/spline trend + seasonal harmonics replacing the single line; time-varying
+logit-linear-in-IDC death adjustment replacing the static Beta; GeneXpert in
+detection; biology held constant over time (do NOT copy 2025's pre/post split of
+`Pr[Mort|NoNotif]`/`Pr[Mort|Aban]`).
+
 ## Data definitions (PI decisions, 2026-06-03)
 
 These define the observed numerators/denominators and so are part of the

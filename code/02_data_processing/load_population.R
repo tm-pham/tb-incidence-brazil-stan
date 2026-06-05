@@ -193,17 +193,20 @@ fetch_sidra_state_pop <- function(table, variable, period = NULL,
 #'
 #' @param years Integer vector of years.
 #' @return data.table(uf, year, population).
-load_ibge_state_population <- function(years) {
+load_ibge_state_population <- function(years,
+                                       estimate_table = SIDRA_POP_ESTIMATE_TABLE,
+                                       estimate_variable = SIDRA_POP_ESTIMATE_VARIABLE,
+                                       census2022_table = SIDRA_POP_CENSUS2022_TABLE,
+                                       census2022_variable = SIDRA_POP_CENSUS2022_VARIABLE) {
   if (!requireNamespace("sidrar", quietly = TRUE)) {
     stop("load_ibge_state_population: package 'sidrar' is required (run on a ",
          "machine with IBGE access).")
   }
-  estimates <- fetch_sidra_state_pop(SIDRA_POP_ESTIMATE_TABLE,
-                                     SIDRA_POP_ESTIMATE_VARIABLE,
+  estimates <- fetch_sidra_state_pop(estimate_table, estimate_variable,
                                      period = years)
   census2022 <- if (2022L %in% years) {
-    fetch_sidra_state_pop(SIDRA_POP_CENSUS2022_TABLE,
-                          SIDRA_POP_CENSUS2022_VARIABLE, stamp_year = 2022L)
+    fetch_sidra_state_pop(census2022_table, census2022_variable,
+                          stamp_year = 2022L)
   } else NULL
 
   combined <- combine_population_sources(

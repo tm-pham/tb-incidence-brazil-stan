@@ -58,8 +58,15 @@ standardise_sim <- function(sim,
     year  = sim_year(sim[[date_col]])[ok],
     month = sim_month(sim[[date_col]])[ok]
   )
+  # Drop records whose date is unparseable (blank / corrupt DTOBITO): without
+  # this they carry NA year/month and are silently lost at grid assembly. Count
+  # them so the loss is visible, not invisible.
+  bad_date <- is.na(out$year) | is.na(out$month) | out$month < 1L | out$month > 12L
+  n_bad_date <- sum(bad_date)
+  if (n_bad_date) out <- out[!bad_date]
   data.table::setattr(out, "n_residence_fallback", attr(coalesced, "n_fallback"))
   data.table::setattr(out, "n_unattributable", attr(coalesced, "n_unattributable"))
+  data.table::setattr(out, "n_bad_date", n_bad_date)
   out[]
 }
 
@@ -147,16 +154,19 @@ fetch_sim_slice <- function(year, uf_abbrev) {
 #' @return data.table of standardised all-cause death records, complete over the
 #'   requested state-year grid.
 load_sim_records <- function(year_start, year_end, uf = "all", existing = NULL,
-                             uf_codes = UF_CODES) {
+                             uf_codes = UF_CODES, uf_abbrev = UF_ABBREV) {
   if (!requireNamespace("microdatasus", quietly = TRUE)) {
     stop("load_sim_records: package 'microdatasus' is required (run on a ",
          "machine with DATASUS access).")
   }
-  # DATASUS FTP is slow; allow long single-file downloads.
-  options(timeout = max(as.numeric(getOption("timeout", 60)), 600))
+  # DATASUS FTP is slow; allow long single-file downloads, but restore the
+  # session option on exit so this function does not leak global state.
+  old_timeout <- getOption("timeout", 60)
+  on.exit(options(timeout = old_timeout), add = TRUE)
+  options(timeout = max(as.numeric(old_timeout), 600))
 
   expected_codes <- if (identical(uf, "all")) uf_codes else {
-    cc <- as.integer(names(UF_ABBREV)[match(uf, UF_ABBREV)])
+    cc <- as.integer(names(uf_abbrev)[match(uf, uf_abbrev)])
     if (anyNA(cc)) stop("load_sim_records: unknown state abbreviation in `uf`.")
     cc
   }
@@ -181,7 +191,7 @@ load_sim_records <- function(year_start, year_end, uf = "all", existing = NULL,
   # Patch any missing state-years, one slice at a time.
   missing <- want[!unique(out[, .(uf, year)]), on = c("uf", "year")]
   for (i in seq_len(nrow(missing))) {
-    ab <- UF_ABBREV[[as.character(missing$uf[i])]]
+    ab <- uf_abbrev[[as.character(missing$uf[i])]]
     message("load_sim_records: fetching missing SIM slice ", ab, " ",
             missing$year[i], " ...")
     slice <- tryCatch(fetch_sim_slice(missing$year[i], ab),

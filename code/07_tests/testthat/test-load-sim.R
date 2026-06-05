@@ -27,6 +27,26 @@ test_that("standardise_sim rolls up to state-month with residence fallback", {
   expect_equal(attr(recs, "n_residence_fallback"), 1L)
 })
 
+test_that("standardise_sim drops unattributable and bad-date records, counting both", {
+  sim <- data.table(
+    cause    = c("A150", "J189", "R99", "B900"),
+    muni_res = c("355030", NA,       "999999", "355030"), # row3 both invalid
+    muni_occ = c("355030", "330455", "999999", "355030"), # row2 occ fallback
+    date     = c("15032018", "20062018", "11112019", "")  # row4 blank date
+  )
+  recs <- standardise_sim(sim)
+  expect_equal(attr(recs, "n_unattributable"), 1L)   # row 3
+  expect_equal(attr(recs, "n_bad_date"), 1L)         # row 4 (blank)
+  expect_equal(nrow(recs), 2L)                        # rows 1,2 survive
+  expect_false(anyNA(recs$year))
+})
+
+test_that("idc_fraction on an empty record set returns no rows", {
+  empty <- data.table(cause = character(), uf = integer(),
+                      year = integer(), month = integer())
+  expect_equal(nrow(idc_fraction(empty)), 0L)
+})
+
 test_that("filter_tb_deaths keeps only A15-A19 and counts by state-month", {
   recs <- data.table(
     cause = c("A150", "A162", "A199", "B900", "J189", "A150"),

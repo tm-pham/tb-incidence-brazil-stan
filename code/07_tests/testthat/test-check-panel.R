@@ -41,6 +41,31 @@ test_that("an implausibly thin all-cause month is flagged (partial gap)", {
   expect_true(any(grepl("partial gap", panel_diagnostics(a)$flags)))
 })
 
+test_that("an NA all-cause cell is flagged as a gap and reported", {
+  a <- build()
+  a$panel[uf == 35L & year == 2014L & month == 6L, allcause_deaths := NA_integer_]
+  flags <- panel_diagnostics(a)$flags
+  expect_true(any(grepl("ZERO all-cause SIM deaths", flags)))
+})
+
+test_that("a flat GeneXpert series (no rise) is flagged", {
+  a <- build(gx = function(y) 0.01)   # constant, never rises
+  expect_true(any(grepl("did not rise", panel_diagnostics(a)$flags)))
+})
+
+test_that("an NA covariate cell is reported (not silently suppressed)", {
+  a <- build()
+  a$panel[1L, idc := NA_real_]
+  expect_true(any(grepl("idc NA cell", panel_diagnostics(a)$flags)))
+})
+
+test_that("fallback TB-only heuristic flags a high-burden zero-death month", {
+  a <- build(deaths = 10L)
+  a$panel[, allcause_deaths := NULL]                 # force the fallback branch
+  a$panel[uf == 35L & year == 2014L & month == 6L, deaths := 0L]
+  expect_true(any(grepl("zero-death month", panel_diagnostics(a)$flags)))
+})
+
 test_that("without all-cause, falls back to the TB-only heuristic", {
   a <- build()
   a$panel[, allcause_deaths := NULL]

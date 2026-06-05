@@ -84,7 +84,9 @@ list(
                                year_start = year_start, year_end = year_end,
                                uf_codes = UF_CODES,
                                covid_break_year = COVID_BREAK_YEAR,
-                               covid_break_month = COVID_BREAK_MONTH)),
+                               covid_break_month = COVID_BREAK_MONTH,
+                               expect_n_states = length(UF_CODES),
+                               expect_n_months = length(years) * 12L)),
 
   tar_target(stan_panel_file, {
     dir.create(OUT_STAN_DATA, recursive = TRUE, showWarnings = FALSE)

@@ -53,6 +53,17 @@ test_that("summarise_notifications counts new + relapse by state-month", {
   expect_error(summarise_notifications(recs), "keep_entry")
 })
 
+test_that("treatment_outcomes counts primary abandonment (code 10)", {
+  recs <- data.table(
+    entry_type = rep("1", 4),
+    uf = rep(35L, 4), year = rep(2018L, 4), month = rep(3L, 4),
+    situa_ence = c("1", "2", "10", "1"),   # cure, abandon, PRIMARY abandon, cure
+    test_molec = NA_character_
+  )
+  out <- treatment_outcomes(recs, keep_entry = KEEP)
+  expect_equal(out$pri_aban_t, 0.5)        # codes 2 and 10 both counted
+})
+
 test_that("treatment_outcomes computes death and abandonment fractions", {
   recs <- data.table(
     entry_type = rep("1", 4),

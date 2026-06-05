@@ -45,7 +45,8 @@
 prepare_stan_data <- function(notifications, deaths, population,
                               idc = NULL, genexpert = NULL, treatment = NULL,
                               year_start, year_end, uf_codes,
-                              covid_break_year, covid_break_month) {
+                              covid_break_year, covid_break_month,
+                              expect_n_states = NULL, expect_n_months = NULL) {
   for (nm in c("notifications", "deaths", "population")) {
     if (!data.table::is.data.table(get(nm))) {
       stop("prepare_stan_data: `", nm, "` must be a data.table.")
@@ -55,11 +56,24 @@ prepare_stan_data <- function(notifications, deaths, population,
   .require_cols(deaths, c("uf", "year", "month", "deaths"), "deaths")
   .require_cols(population, c("uf", "year", "month", "population"), "population")
 
+  uf_codes <- sort(unique(uf_codes))
   years <- seq.int(year_start, year_end)
   n_months <- length(years) * 12L
 
+  # Fail loudly if the grid is not the expected size (production passes
+  # expect_n_states = 27, expect_n_months = 252; left NULL for subset/test runs
+  # so a deliberately smaller grid does not error).
+  if (!is.null(expect_n_states) && length(uf_codes) != expect_n_states) {
+    stop("prepare_stan_data: expected ", expect_n_states, " states, got ",
+         length(uf_codes), ".")
+  }
+  if (!is.null(expect_n_months) && n_months != expect_n_months) {
+    stop("prepare_stan_data: expected ", expect_n_months, " months, got ",
+         n_months, " (", year_start, "-", year_end, ").")
+  }
+
   # --- Canonical universe: the complete grid -------------------------------
-  grid <- data.table::CJ(uf = sort(uf_codes), year = years, month = 1:12)
+  grid <- data.table::CJ(uf = uf_codes, year = years, month = 1:12)
   data.table::setkey(grid, uf, year, month)
 
   # --- Population must cover every cell, be unique and positive ------------
