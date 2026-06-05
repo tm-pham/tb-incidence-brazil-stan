@@ -1,9 +1,11 @@
 # load_population.R
 # IBGE STATE population: the person-time denominator (the gamma offset), expanded
-# to state-month over 2003-2023. Annual intercensal estimates span the 2000,
-# 2010, and 2022 censuses (note the 2022 revision). The pure transforms
-# (tidy_state_population, expand_population_monthly) are tested;
-# load_ibge_state_population() is the thin sidrar fetch wrapper.
+# to state-month over 2003-2023. Assembled across the censuses: the annual
+# intercensal ESTIMATES table plus the 2022 CENSUS anchor (which revised many
+# states down from the projections), combined census-over-estimate. The pure
+# transforms (tidy_state_population, combine_population_sources,
+# expand_population_monthly) are tested; fetch_sidra_state_pop() and
+# load_ibge_state_population() are the defensive sidrar fetch wrappers.
 
 #' Standardise a raw IBGE state-population frame to (uf, year, population).
 #'
@@ -90,57 +92,132 @@ expand_population_monthly <- function(annual, year_start, year_end,
 
 # --- IBGE/sidrar fetch wrapper (side-effecting; runs on the Mac/cluster) -----
 
-#' Fetch annual state population estimates from IBGE (SIDRA) and standardise.
+#' Combine annual state-population anchors from several IBGE sources.
 #'
-#' Side-effecting (network + sidrar). Not unit tested; the testable logic lives
-#' in tidy_state_population() / expand_population_monthly(). SIDRA returns
-#' accented Portuguese column labels that vary by table/version, so the UF / year
-#' / value columns are located by PATTERN rather than hard-coded names.
+#' Pure: no I/O. Row-binds the supplied source tables (each (uf, year,
+#' population)), dropping NULL sources, and for any (uf, year) present in more
+#' than one source keeps the value from the higher-priority source (census over
+#' estimate). Validates positivity. This is where the 2022 Census takes
+#' precedence over any stale estimate for 2022.
 #'
-#' Caveats (Brazilian population is assembled across censuses):
-#'   * Table 6579 ("Estimativas de Populacao") covers non-census years; census
-#'     years (2010, 2022) are excluded and are interpolated by
-#'     expand_population_monthly() from the surrounding anchors. Years past the
-#'     table's range (often 2022-2023) are held constant by rule=2 there. Both
-#'     are approximations to refine with the 2022 census + 2023 estimate.
+#' @param sources Named list of data.tables (or NULLs), keyed by source name.
+#' @param priority Source names from highest to lowest precedence.
+#' @return data.table(uf, year, population, source), one row per (uf, year).
+combine_population_sources <- function(sources, priority = names(sources)) {
+  sources <- sources[!vapply(sources, is.null, logical(1))]
+  if (!length(sources)) {
+    stop("combine_population_sources: no population source returned any data.")
+  }
+  dt <- data.table::rbindlist(lapply(names(sources), function(nm) {
+    s <- data.table::as.data.table(sources[[nm]])
+    s[, source := nm][]
+  }), use.names = TRUE)
+  dt[, prio := match(source, priority)]
+  if (anyNA(dt$prio)) {
+    stop("combine_population_sources: source(s) missing from `priority`: ",
+         paste(setdiff(unique(dt$source), priority), collapse = ", "))
+  }
+  data.table::setorder(dt, uf, year, prio)
+  out <- dt[, .SD[1L], by = .(uf, year)]            # highest-priority per cell
+  if (anyNA(out$population) || any(out$population <= 0)) {
+    stop("combine_population_sources: non-positive population after combine.")
+  }
+  data.table::setorder(out, uf, year)
+  out[, .(uf, year, population, source)]
+}
+
+#' Fetch one SIDRA state-population table and tidy to (uf, year, population).
+#'
+#' Side-effecting (network + sidrar) and DEFENSIVE: returns NULL (with a message)
+#' rather than erroring if the table fails or its columns cannot be located, so a
+#' single source outage cannot sink the whole assembly. SIDRA labels are accented
+#' and vary, so columns are matched by pattern. Census tables have no year
+#' column, so pass `stamp_year` to stamp it.
+#'
+#' @param table,variable SIDRA table and variable IDs.
+#' @param period Years to request (NULL for a single-snapshot census table).
+#' @param stamp_year If set, stamp this year instead of reading a year column.
+#' @return data.table(uf, year, population) or NULL.
+fetch_sidra_state_pop <- function(table, variable, period = NULL,
+                                  stamp_year = NULL) {
+  args <- list(x = table, variable = variable, geo = "State")
+  if (!is.null(period)) args$period <- as.character(period)
+  raw <- tryCatch(do.call(sidrar::get_sidra, args),
+                  error = function(e) {
+                    message("  sidra table ", table, " fetch failed: ",
+                            conditionMessage(e)); NULL })
+  if (is.null(raw)) return(NULL)
+  raw <- data.table::as.data.table(raw)
+  if (!nrow(raw)) return(NULL)
+  nms <- names(raw)
+  pick <- function(patterns) {
+    for (p in patterns) {
+      h <- grep(p, nms, value = TRUE, ignore.case = TRUE)
+      if (length(h)) return(h[1L])
+    }
+    NA_character_
+  }
+  uf_col  <- pick(c("Federa.*[CC].?dig", "Unidade da Federa"))
+  val_col <- pick(c("^Valor$", "Valor"))
+  yr_col  <- if (is.null(stamp_year)) pick(c("^Ano$", "Ano")) else NA_character_
+  if (is.na(uf_col) || is.na(val_col) ||
+      (is.null(stamp_year) && is.na(yr_col))) {
+    message("  could not locate uf/year/value columns in sidra table ", table,
+            "; columns were: ", paste(nms, collapse = " | "))
+    return(NULL)
+  }
+  out <- data.table::data.table(
+    uf = suppressWarnings(as.integer(raw[[uf_col]])),
+    year = if (is.null(stamp_year)) suppressWarnings(as.integer(raw[[yr_col]]))
+           else as.integer(stamp_year),
+    population = suppressWarnings(as.numeric(raw[[val_col]]))
+  )
+  out <- out[!is.na(uf) & uf >= 11L & uf <= 53L &
+               !is.na(population) & population > 0]
+  if (!nrow(out)) return(NULL)
+  out[]
+}
+
+#' Assemble annual state population from IBGE (SIDRA), across the censuses.
+#'
+#' Side-effecting. Pulls the annual intercensal ESTIMATES table for the requested
+#' years and the 2022 CENSUS for the 2022 anchor, then combines them
+#' (census > estimate). The testable logic is in combine_population_sources() /
+#' expand_population_monthly(); fetch_sidra_state_pop() is defensive so a source
+#' outage degrades gracefully (the year is interpolated/held downstream rather
+#' than crashing the run).
+#'
+#' Coverage: estimate years come from 6579; 2022 from the census; gap years
+#' (2007, 2010) are interpolated and any year past the last anchor (2023) is held
+#' by expand_population_monthly(). Years still absent are reported.
 #'
 #' @param years Integer vector of years.
-#' @return data.table(uf, year, population) via tidy_state_population().
+#' @return data.table(uf, year, population).
 load_ibge_state_population <- function(years) {
   if (!requireNamespace("sidrar", quietly = TRUE)) {
     stop("load_ibge_state_population: package 'sidrar' is required (run on a ",
          "machine with IBGE access).")
   }
-  raw <- sidrar::get_sidra(
-    x = 6579, variable = 9324, period = as.character(years), geo = "State"
-  )
-  raw <- data.table::as.data.table(raw)
-  nms <- names(raw)
+  estimates <- fetch_sidra_state_pop(SIDRA_POP_ESTIMATE_TABLE,
+                                     SIDRA_POP_ESTIMATE_VARIABLE,
+                                     period = years)
+  census2022 <- if (2022L %in% years) {
+    fetch_sidra_state_pop(SIDRA_POP_CENSUS2022_TABLE,
+                          SIDRA_POP_CENSUS2022_VARIABLE, stamp_year = 2022L)
+  } else NULL
 
-  pick <- function(patterns, what) {
-    for (p in patterns) {
-      hit <- grep(p, nms, value = TRUE, ignore.case = TRUE)
-      if (length(hit)) return(hit[1L])
-    }
-    stop("load_ibge_state_population: could not find the ", what, " column in ",
-         "the sidrar output. Columns returned were:\n  ",
-         paste(nms, collapse = "\n  "))
-  }
-  # UF code: "Unidade da Federacao (Codigo)" (accents/cedilla vary). Prefer the
-  # CODE column over the name column.
-  uf_col   <- pick(c("Federa.*[CC].?dig", "Unidade da Federa"), "UF code")
-  year_col <- pick(c("^Ano$", "Ano$"), "year")
-  val_col  <- pick(c("^Valor$", "Valor"), "value")
+  combined <- combine_population_sources(
+    list(census2022 = census2022, estimates = estimates),
+    priority = c("census2022", "estimates"))
 
-  out <- tidy_state_population(raw, uf_col = uf_col, year_col = year_col,
-                               value_col = val_col)
-  # Drop any non-state aggregate (e.g. a "Brasil" total) defensively.
-  out <- out[uf >= 11L & uf <= 53L]
-  miss_years <- setdiff(years, unique(out$year))
-  if (length(miss_years)) {
-    message("load_ibge_state_population: table 6579 returned no rows for ",
-            "year(s) ", paste(miss_years, collapse = ", "),
-            " (census years are excluded; these are interpolated/held downstream).")
+  got <- combined[, .N, by = .(year, source)]
+  message("load_ibge_state_population: anchors by source -> ",
+          paste(sprintf("%d:%s", got$year, got$source), collapse = " "))
+  miss <- setdiff(years, unique(combined$year))
+  if (length(miss)) {
+    message("load_ibge_state_population: no anchor for year(s) ",
+            paste(miss, collapse = ", "),
+            " (interpolated / held by expand_population_monthly).")
   }
-  out[]
+  combined[, .(uf, year, population)]
 }

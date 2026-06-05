@@ -89,6 +89,18 @@ UF_ABBREV <- c(`11` = "RO", `12` = "AC", `13` = "AM", `14` = "RR", `15` = "PA",
 COVID_BREAK_YEAR  <- 2020L
 COVID_BREAK_MONTH <- 4L
 
+# Population denominators span the 2000/2010/2022 censuses. We assemble from
+# IBGE/SIDRA: the annual intercensal ESTIMATES table (which excludes census /
+# count years) PLUS the 2022 Census for the 2022 anchor (the census revised many
+# state populations down from the projections). Remaining gap years (2007, 2010)
+# and any year past the last anchor (2023) are interpolated / held by
+# expand_population_monthly(). Table/variable IDs are config so they can be
+# repointed without code surgery if the installed sidrar exposes different ones.
+SIDRA_POP_ESTIMATE_TABLE      <- 6579L  # Estimativas de Populacao (annual)
+SIDRA_POP_ESTIMATE_VARIABLE   <- 9324L  # Populacao residente estimada
+SIDRA_POP_CENSUS2022_TABLE    <- 4709L  # Censo 2022: Populacao residente
+SIDRA_POP_CENSUS2022_VARIABLE <- 93L    # Populacao residente (total)
+
 # --- Parallelism ------------------------------------------------------------
 # Intended core count: all but one locally; the cluster sbatch template
 # overrides this. The actual options(mc.cores = ) / setDTthreads() side effect
