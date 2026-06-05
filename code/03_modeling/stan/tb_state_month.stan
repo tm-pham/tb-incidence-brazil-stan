@@ -82,6 +82,7 @@ data {
   real<lower=0> pmort_aban_a;
   real<lower=0> pmort_aban_b;
   real inc_intercept_mean;                // per-capita log-rate location (e.g. -9)
+  real det_intercept_mean;                // logit-detection location (0 = 50% prior)
 
   int<lower=0, upper=1> prior_only;
 }
@@ -155,7 +156,7 @@ model {
   covid_inc_level ~ normal(0, inc_coef_sd);
   covid_inc_slope ~ normal(0, inc_coef_sd);
 
-  det_intercept ~ normal(0, det_intercept_sd);
+  det_intercept ~ normal(det_intercept_mean, det_intercept_sd);
   z_trend_det ~ std_normal();
   sigma_trend_det ~ normal(0, trend_sd_det);
   z_season_det ~ std_normal();

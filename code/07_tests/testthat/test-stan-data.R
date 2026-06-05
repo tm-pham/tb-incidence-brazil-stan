@@ -57,3 +57,34 @@ test_that("a length mismatch errors", {
   bad <- b$obs; bad$idc <- bad$idc[-1L]
   expect_error(build_stan_model_data(bad, b$design, b$kernels, b$pr), "wrong length")
 })
+
+test_that("prior-mean locations pass through", {
+  b <- build_obs()
+  sd <- build_stan_model_data(b$obs, b$design, b$kernels, b$pr,
+                              inc_intercept_mean = -11, det_intercept_mean = 0.4)
+  expect_equal(sd$inc_intercept_mean, -11)
+  expect_equal(sd$det_intercept_mean, 0.4)
+})
+
+test_that("stan_data_from_panel bridges a real assembled panel (COVID inferred)", {
+  library(data.table)
+  source(here::here("code", "02_data_processing", "prepare_stan_data.R"))
+  ufs <- c(35L, 33L); ys <- 2019L; ye <- 2021L
+  grid <- CJ(uf = ufs, year = ys:ye, month = 1:12)
+  pop <- copy(grid)[, population := 1e6][]
+  notif <- copy(grid)[, notifications := 20L][]
+  dth <- copy(grid)[, deaths := 2L][]
+  idc <- copy(grid)[, idc := 0.1][]
+  gx <- copy(grid)[, genexpert_share := 0.3][]
+  trt <- copy(grid)[, `:=`(pri_mort_t = 0.04, pri_aban_t = 0.1)][]
+  assembled <- prepare_stan_data(notif, dth, pop, idc = idc, genexpert = gx,
+                                 treatment = trt, year_start = ys, year_end = ye,
+                                 uf_codes = ufs, covid_break_year = 2020L,
+                                 covid_break_month = 4L)
+  sd <- stan_data_from_panel(assembled, 35L, start_month_of_year = 1L)
+  expect_equal(sd$N_obs, 36L)
+  # COVID break inferred from the panel = April 2020 = obs month 16; 21 post months.
+  expect_equal(sum(sd$covid_level[(sd$N_pre + 1L):(sd$N_pre + sd$N_obs)]), 21)
+  expect_length(sd$sinan, 36L)
+  expect_equal(sd$idc, rep(0.1, 36L))
+})

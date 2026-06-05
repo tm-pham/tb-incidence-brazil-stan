@@ -19,7 +19,12 @@ compile_tb_model <- function(
 #' Reasonable inits to help the 252-month series converge.
 #'
 #' The per-capita log-incidence intercept must start near its realistic value
-#' (~ -9), not at 0 (which would make exp(loglam) overflow). Scales start small.
+#' (~ -9), not at 0 (which would make exp(loglam) overflow -- the chief
+#' convergence threat, see code/03_modeling/README.md). Scales start small. The
+#' init draws are seeded so initialisation is reproducible (the `seed` argument to
+#' $sample() controls only Stan's HMC RNG, not these R-side draws).
+#' (Draws use the R RNG; fit_base_model() scopes it with withr::local_seed so the
+#' per-chain inits are reproducible yet distinct across chains.)
 init_tb_model <- function(stan_data, inc_intercept = -9) {
   function() list(
     inc_intercept = inc_intercept + stats::rnorm(1, 0, 0.2),
@@ -54,6 +59,9 @@ fit_base_model <- function(stan_data, seed,
   if (missing(seed) || is.null(seed)) {
     stop("fit_base_model: an explicit integer `seed` is required.")
   }
+  # Scope the R-side RNG so the per-chain init draws are reproducible (the `seed`
+  # below controls only Stan's HMC RNG).
+  withr::local_seed(seed)
   if (is.null(model)) model <- compile_tb_model()
   fit <- model$sample(
     data = stan_data, seed = seed,
@@ -62,8 +70,15 @@ fit_base_model <- function(stan_data, seed,
     adapt_delta = adapt_delta, max_treedepth = max_treedepth,
     init = init_tb_model(stan_data, inc_intercept_init), refresh = refresh
   )
-  # Convergence summary on the estimands + key scalars.
-  vars <- c("inc_intercept", "det_intercept", "genexpert_coef",
+  # Convergence summary over the ESTIMANDS (incidence_rate, detection) and all
+  # sampled scalars/coefficients -- NOT only a handful of scalars, so the check
+  # can catch non-convergence in the time-series parameters (testing review C1).
+  vars <- c("incidence_rate", "detection",
+            "inc_intercept", "det_intercept", "genexpert_coef",
+            "beta_trend_inc", "beta_trend_det", "beta_season_inc",
+            "beta_season_det", "covid_inc_level", "covid_inc_slope",
+            "covid_det_level", "covid_det_slope",
+            "sigma_trend_inc", "sigma_trend_det",
             "theta0", "theta_time", "theta_idc",
             "p_mort_aban", "p_mort_nonotif")
   s <- fit$summary(variables = vars)

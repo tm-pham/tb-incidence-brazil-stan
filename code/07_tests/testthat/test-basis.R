@@ -32,3 +32,10 @@ test_that("build_design lays out the extended axis and COVID terms", {
   expect_equal(d$covid_slope[d$obs_index == 24L], 9)
   expect_equal(nrow(d$B_trend), 34L)
 })
+
+test_that("build_design with no COVID break gives all-zero COVID columns", {
+  d <- build_design(n_obs = 24L, n_pre = 10L, covid_break = NULL,
+                    n_trend_knots = 6L, n_harmonics = 2L)
+  expect_true(all(d$covid_level == 0))
+  expect_true(all(d$covid_slope == 0))
+})

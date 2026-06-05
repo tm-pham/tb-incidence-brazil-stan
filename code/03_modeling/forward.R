@@ -6,7 +6,7 @@
 # must reproduce simulate_state_month()'s expected counts to numerical precision.
 # Keep this in lockstep with both tb_state_month.stan and simulate.R.
 
-source(here::here("code", "01_functions", "delays.R"))
+if (!exists("causal_convolve")) source(here::here("code", "01_functions", "delays.R"))
 
 #' Forward model: expected counts and latent estimands from Stan data + params.
 #'

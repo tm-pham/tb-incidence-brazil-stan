@@ -33,10 +33,15 @@ test_that("the model recovers known monthly incidence and detection", {
                         iter_warmup = 1000L, iter_sampling = 1000L,
                         adapt_delta = 0.95)
 
-  # Convergence.
+  # Convergence over the estimands + all sampled params (fit_base_model's vars
+  # now include incidence_rate / detection, so max_rhat covers the time series).
   expect_lt(res$diagnostics$max_rhat, 1.01)
+  # Fast-mode ESS floor: 4 chains x 1000 draws = 4000; 400 = 10% efficiency.
   expect_gt(res$diagnostics$min_ess_bulk, 400)
   expect_equal(res$diagnostics$num_divergent, 0)
+  # And R-hat directly on the estimand vectors (not just the scalar summary).
+  expect_lt(max(res$fit$summary("incidence_rate")$rhat), 1.01)
+  expect_lt(max(res$fit$summary("detection")$rhat), 1.01)
 
   # Recovery of the latent estimands: posterior median vs truth, and coverage.
   sm_inc <- res$fit$summary("incidence_rate", "median",
@@ -49,4 +54,20 @@ test_that("the model recovers known monthly incidence and detection", {
   cover_det <- mean(truth$true_delta >= sm_det$`5%` & truth$true_delta <= sm_det$`95%`)
   expect_gt(cover_inc, 0.80)
   expect_gt(cover_det, 0.80)
+
+  # Recovery of the structural terms (COVID shock + time-varying death
+  # adjustment + GeneXpert), whose signs are known from default_true_params:
+  # covid_inc_level -0.15, covid_det_level -0.20, theta_time +0.02, theta_idc
+  # -1.5, genexpert_coef +0.5. The 90% CI should sit on the correct side of 0.
+  th <- res$fit$summary(c("covid_inc_level", "covid_det_level", "theta_time",
+                          "theta_idc", "genexpert_coef"))
+  q5 <- function(v) th$q5[th$variable == v]; q95 <- function(v) th$q95[th$variable == v]
+  expect_lt(q95("covid_inc_level"), 0)
+  expect_lt(q95("covid_det_level"), 0)
+  expect_gt(q5("theta_time"), 0)
+  expect_lt(q95("theta_idc"), 0)
+  expect_gt(q5("genexpert_coef"), 0)
+  # The COVID-period months are fit, not just the pre-COVID stretch.
+  covid_months <- seq.int(124L, n_obs)
+  expect_gt(cor(sm_inc$median[covid_months], truth$true_gamma[covid_months]), 0.8)
 })

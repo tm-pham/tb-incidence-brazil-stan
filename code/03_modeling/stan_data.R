@@ -4,9 +4,11 @@
 # (stan_data_for_state -> this) and simulated data (recovery test). All prior
 # hyperparameters come from priors.R, so the model and simulator share one source.
 
-source(here::here("code", "01_functions", "delays.R"))
-source(here::here("code", "01_functions", "basis.R"))
-source(here::here("code", "03_modeling", "priors.R"))
+# Guarded sourcing: avoid re-sourcing (and any future top-level side effects) when
+# these have already been loaded by another file in the session.
+if (!exists("build_delay_kernels")) source(here::here("code", "01_functions", "delays.R"))
+if (!exists("build_design"))        source(here::here("code", "01_functions", "basis.R"))
+if (!exists("priors"))              source(here::here("code", "03_modeling", "priors.R"))
 
 #' Build the Stan data list for one state.
 #'
@@ -22,7 +24,8 @@ source(here::here("code", "03_modeling", "priors.R"))
 #' @param prior_only If TRUE, the model skips the likelihood (prior predictive).
 #' @return A named list ready for cmdstanr `$sample(data = ...)`.
 build_stan_model_data <- function(obs, design, kernels, pr = priors(),
-                                  inc_intercept_mean = -9, prior_only = FALSE) {
+                                  inc_intercept_mean = -9,
+                                  det_intercept_mean = 0, prior_only = FALSE) {
   N_obs <- length(obs$population)
   N_pre <- design$n_pre
   if (N_obs != design$n_obs) {
@@ -66,6 +69,7 @@ build_stan_model_data <- function(obs, design, kernels, pr = priors(),
     pmort_aban_a = num(pr$p_mort_aban["a"]),
     pmort_aban_b = num(pr$p_mort_aban["b"]),
     inc_intercept_mean = inc_intercept_mean,
+    det_intercept_mean = det_intercept_mean,
     prior_only = as.integer(prior_only)
   )
 }

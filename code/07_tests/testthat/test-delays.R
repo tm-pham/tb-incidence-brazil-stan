@@ -30,6 +30,7 @@ test_that("causal_convolve shifts and respects the available past", {
   expect_equal(causal_convolve(c(2, 0, 0), c(0.5, 0.5)), c(1, 1, 0))
 })
 
-test_that("discretise_delay rejects a degenerate kernel", {
+test_that("discretise_delay rejects a degenerate kernel and bad max_months", {
   expect_error(discretise_delay(function(x) rep(0, length(x)), 5L), "degenerate")
+  expect_error(weibull_delay(1.75, 25, -1L), "max_months")
 })

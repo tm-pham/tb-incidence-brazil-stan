@@ -129,16 +129,30 @@ list(
   # these targets only build where Stan is installed; the data targets above run
   # without it. Each state is seeded GLOBAL_SEED + uf.
   tar_target(model_states, assembled$states),
+  # Track the seed as a target (always-cue) so a change invalidates the fits,
+  # rather than being a silent global (reproducibility review H2).
+  tar_target(global_seed, GLOBAL_SEED, cue = tar_cue(mode = "always")),
   tar_target(state_estimate, {
     this_uf <- model_states
     ps <- assembled$panel[uf == this_uf]
     data.table::setorder(ps, year, month)
     sd <- stan_data_from_panel(assembled, this_uf, start_month_of_year = 1L)
-    res <- fit_base_model(sd, seed = GLOBAL_SEED + this_uf)
+    res <- fit_base_model(sd, seed = global_seed + this_uf)
     dir.create(OUT_MODEL_FITS, recursive = TRUE, showWarnings = FALSE)
+    dir.create(OUT_LOGS, recursive = TRUE, showWarnings = FALSE)
+    # NB the fit .rds is a side effect, not a file target: to regenerate a
+    # deleted fit, tar_invalidate("state_estimate") first.
     res$fit$save_object(file.path(OUT_MODEL_FITS, paste0("fit_uf_", this_uf, ".rds")))
+    # Persist provenance so the cmdstan version is queryable without the fit.
+    writeLines(c(sprintf("cmdstan_version: %s", res$cmdstan_version),
+                 sprintf("seed: %d", res$seed),
+                 sprintf("max_rhat: %.4f", res$diagnostics$max_rhat),
+                 sprintf("min_ess_bulk: %.0f", res$diagnostics$min_ess_bulk),
+                 sprintf("num_divergent: %d", res$diagnostics$num_divergent)),
+               file.path(OUT_LOGS, sprintf("fit_uf_%d_provenance.txt", this_uf)))
     est <- tidy_state_estimates(res, this_uf, ps$year, ps$month)
     data.table::setattr(est, "diagnostics", res$diagnostics)
+    data.table::setattr(est, "cmdstan_version", res$cmdstan_version)
     est
   }, pattern = map(model_states)),
 

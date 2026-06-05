@@ -43,13 +43,35 @@ test_that("latent probabilities and covariate fractions are in [0,1]", {
   expect_true(all(d$true_lambda > 0) && all(d$true_gamma > 0))
 })
 
-test_that("expected counts equal population * rate (likelihood structure)", {
+test_that("expected counts are population * a valid per-capita rate", {
   s <- make_one()
   d <- simulate_state_month(s$design, s$kernels, s$params, s$cov, seed = 7L)
-  # notifications mean = pop * Notified; recover Notified from exp_notif.
   expect_true(all(is.finite(d$exp_notif)) && all(d$exp_notif > 0))
   expect_true(all(is.finite(d$exp_deaths)) && all(d$exp_deaths > 0))
-  expect_equal(d$exp_notif / d$population, d$exp_notif / d$population)  # offset is multiplicative
+  # exp_notif / population is the per-capita notified rate: a probability in (0,1).
+  rate_notif <- d$exp_notif / d$population
+  expect_true(all(rate_notif > 0 & rate_notif < 1))
+  # exp_deaths / (population * death_adj) is the per-capita all-deaths rate in (0,1).
+  rate_death <- d$exp_deaths / (d$population * d$true_death_adj)
+  expect_true(all(rate_death > 0 & rate_death < 1))
+  # Doubling the population doubles the expected counts (offset is multiplicative).
+  s2 <- s; s2$cov$population <- s$cov$population * 2
+  d2 <- simulate_state_month(s$design, s$kernels, s$params, s2$cov, seed = 7L)
+  expect_equal(d2$exp_notif, 2 * d$exp_notif, tolerance = 1e-9)
+})
+
+test_that("different seeds give different draws", {
+  s <- make_one()
+  a <- simulate_state_month(s$design, s$kernels, s$params, s$cov, seed = 7L)
+  b <- simulate_state_month(s$design, s$kernels, s$params, s$cov, seed = 8L)
+  expect_false(identical(a$notifications, b$notifications))
+})
+
+test_that("non-finite expected counts error (bad params guard)", {
+  s <- make_one()
+  bad <- s$params; bad$inc_intercept <- 1000   # exp(1000) overflows to Inf
+  expect_error(simulate_state_month(s$design, s$kernels, bad, s$cov, seed = 1L),
+               "non-finite")
 })
 
 test_that("raising the GeneXpert coefficient raises detection", {

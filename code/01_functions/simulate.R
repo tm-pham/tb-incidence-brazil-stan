@@ -18,9 +18,9 @@
 #
 # Side-effect free: no file I/O; RNG seeds scoped with withr::with_seed.
 
-source(here::here("code", "01_functions", "delays.R"))
-source(here::here("code", "01_functions", "basis.R"))
-source(here::here("code", "03_modeling", "priors.R"))
+if (!exists("build_delay_kernels")) source(here::here("code", "01_functions", "delays.R"))
+if (!exists("build_design"))        source(here::here("code", "01_functions", "basis.R"))
+if (!exists("priors"))              source(here::here("code", "03_modeling", "priors.R"))
 
 #' Simulate one state's monthly notification and death counts.
 #'

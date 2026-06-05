@@ -26,4 +26,14 @@ test_that("regression priors match (incidence wide, detection tight)", {
   p <- priors()
   expect_equal(unname(p$inc_intercept), c(0, 10))
   expect_equal(unname(p$det_intercept), c(0, 1))
+  # The incidence/detection asymmetry is a deliberate identifiability choice.
+  expect_equal(unname(p$inc_coef), c(0, 10))
+  expect_equal(unname(p$det_coef), c(0, 1))
+})
+
+test_that("death-adjustment and GeneXpert coefficient priors are pinned", {
+  p <- priors()
+  expect_equal(unname(p$death_adj$theta0), c(0, 1))
+  expect_equal(unname(p$death_adj$theta_idc), c(0, 1))
+  expect_equal(unname(p$genexpert_coef), c(0, 1))
 })

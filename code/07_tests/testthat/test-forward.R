@@ -31,3 +31,21 @@ test_that("tb_forward reproduces the simulator's expected counts exactly", {
   expect_equal(fwd$detection, sim$true_delta, tolerance = 1e-9)
   expect_equal(fwd$death_adj, sim$true_death_adj, tolerance = 1e-9)
 })
+
+test_that("the forward model stays finite over the full 252-month axis", {
+  pr <- priors()
+  kernels <- build_delay_kernels(pr$delays)
+  n_obs <- 252L                                   # 2003-2023
+  design <- build_design(n_obs, n_pre = default_n_pre(pr), start_month_of_year = 1L,
+                         covid_break = 208L, n_trend_knots = 8L, n_harmonics = 2L)
+  params <- default_true_params(design, seed = 2L)
+  cov <- synthetic_covariates(n_obs)
+  sd <- build_stan_model_data(
+    list(population = cov$population, sinan = rep(0L, n_obs), sim = rep(0L, n_obs),
+         idc = cov$idc, genexpert = cov$genexpert,
+         pri_mort_t = cov$pri_mort_t, pri_aban_t = cov$pri_aban_t),
+    design, kernels, pr)
+  fwd <- tb_forward(sd, params)
+  expect_true(all(is.finite(fwd$exp_notif)) && all(fwd$exp_notif > 0))
+  expect_true(all(is.finite(fwd$exp_deaths)) && all(fwd$exp_deaths > 0))
+})
