@@ -1,0 +1,286 @@
+---
+title: "Monthly state-level tuberculosis incidence and case detection in Brazil, 2003-2023"
+subtitle: "Methods"
+format:
+  html:
+    toc: true
+    number-sections: true
+    df-print: kable
+  pdf:
+    toc: true
+    number-sections: true
+bibliography: ../../literature/references.bib
+---
+
+# Overview
+
+We estimate monthly tuberculosis (TB) **incidence** and the **case-detection
+probability** for each of the 27 Brazilian federative units (26 states and the
+Federal District) over January 2003 to December 2023 (252 monthly time points per
+unit). Both quantities are latent: neither is observed directly. We infer them
+from two routinely collected data streams, notifications (SINAN) and deaths
+(SIM), linked to incidence through a monthly mechanistic natural-history process.
+The model extends the monthly natural-history model of @chitwood2025disruptions,
+with the death-reporting adjustment generalised to be time-varying following
+@chitwood2021bes. The model is fit one state at a time. These estimates feed a
+separate municipality-month panel study of air pollution and TB, so that effects
+can be reported on the incidence scale rather than the notification scale.
+
+We do not build a municipality-level incidence model: at municipality-month
+resolution TB deaths are too sparse to separate incidence from detection, and a
+downscaled outcome would strip the municipality-month variation the panel relies
+on. Municipality burden mapping [@chitwood2022spatial] is out of scope here.
+
+## Estimands
+
+For state $s$ and month $t$ we target two quantities:
+
+- $\gamma_{s,t}$: the true incidence rate of symptomatic TB (newly symptomatic
+  cases per person-month), reported per 100,000.
+- $\delta_{s,t}$: the case-detection probability, the probability that an
+  incident case that becomes detectable is notified.
+
+These are kept distinct from the observed notification and death counts
+throughout. Observed counts are modelled as realisations of the latent process;
+they are never relabelled as incidence.
+
+## The identifying idea
+
+Notifications and deaths are observations generated from incidence through the
+natural-history process. They identify incidence and the case-detection
+probability **only because informative priors pin the natural-history
+parameters** (the survival and case-fatality probabilities and the delay
+distributions). The death channel is what identifies detection: for a given
+incidence, more deaths imply that fewer cases were detected and treated. Because
+this rests on the mortality data, the **death-reporting adjustment is
+first-order** and is modelled as time-varying over 2003-2023, since the coverage
+and completeness of death registration in SIM improved substantially over the
+period. A static adjustment would confound improving registration with falling
+incidence and rising detection.
+
+# Data and case definitions
+
+## Notifications (SINAN)
+
+TB notifications are drawn from the Sistema de Informacao de Agravos de
+Notificacao (SINAN). The monthly notification count for a state is the number of
+records with treatment-entry type "new case" or "relapse" (`TRATAMENTO` codes 1
+and 2), excluding re-entry after loss to follow-up, transfer, post-mortem
+notification, and unknown entry types. Records are attributed to the
+municipality of residence, with the municipality of notification used as a
+fallback, and then aggregated to the state. Cases are dated by month of
+diagnosis (`DT_DIAG`).
+
+From the same records we derive two state-month covariate series:
+
+- **Treatment-outcome fractions.** The closure-status field (`SITUA_ENCE`) gives,
+  among closed cases, the fraction whose outcome is death ($\mathrm{pMort}_{s,t}$)
+  and the fraction lost to follow-up ($\mathrm{pAban}_{s,t}$). These enter the
+  mortality model as data, not as estimated parameters.
+- **Rapid molecular testing (GeneXpert).** The fraction of notified cases with a
+  recorded rapid molecular test result (`TEST_MOLEC`), a proxy for diagnostic
+  capacity, used as a covariate in the detection sub-model. The roll-out of Xpert
+  MTB/RIF in Brazil began around 2014.
+
+## Deaths (SIM)
+
+TB deaths are drawn from the Sistema de Informacao sobre Mortalidade (SIM). A
+death is counted as a TB death if its underlying cause is an active-TB ICD-10
+code (A15-A19). The monthly state count uses the same residence-with-occurrence
+attribution as notifications and is dated by month of death.
+
+From the same all-cause SIM extract we compute the **ill-defined-cause-of-death
+(IDC) fraction**: the share of all deaths in a state-month coded to ICD-10
+Chapter XVIII (R00-R99, "causas mal definidas"). This series is the covariate
+that drives the time-varying death-reporting adjustment.
+
+Using one all-cause extract for both the TB-death count and the IDC fraction
+keeps the numerator and denominator on the same attribution rules. State-month
+completeness is asserted (every state-year must be present, and no state-month may
+have zero all-cause deaths), so a failed or truncated download cannot be silently
+treated as zero TB deaths.
+
+## Population (IBGE)
+
+The person-time denominator is the resident population from the Instituto
+Brasileiro de Geografia e Estatistica (IBGE), via the SIDRA system. Annual
+state-level estimates span the 2000, 2010, and 2022 censuses. We combine the
+annual intercensal estimates with the 2022 census count (which revised several
+state populations relative to the projections), giving census priority where they
+overlap, and interpolate linearly onto monthly mid-points. Population enters the
+likelihood as a multiplicative person-time offset, not as a covariate.
+
+# Model
+
+The model is discrete in monthly time and fit separately for each state; the
+state subscript is suppressed below. To make the fixed-delay convolutions
+complete for the observed window, the latent series are defined on an extended
+axis that prepends a pre-window of length equal to the total delay support; only
+the observed months enter the likelihood.
+
+## Natural history and likelihood
+
+Let $\lambda_t$ be the per-capita TB infection rate. Incident symptomatic cases
+arise by convolving infections with the infection-to-symptom delay,
+
+$$
+\gamma_t = \sum_{i\ge 0} \lambda_{t-i}\,\phi^{\lambda}_i ,
+$$
+
+where $\phi^{\lambda}$ is the discretised delay kernel. The symptomatic series
+$\gamma_t$ is the incidence estimand. Cases become detectable after a second
+delay, and a fraction $\delta_t$ of detectable cases are notified:
+
+$$
+\text{Notified}_t = \delta_t \sum_{i\ge 0}\gamma_{t-i}\,\phi^{\gamma}_i,
+\qquad
+\text{Missed}_t = (1-\delta_t)\sum_{i\ge 0}\gamma_{t-i}\,\phi^{\gamma}_i .
+$$
+
+Deaths arise on two pathways. Among notified cases, a fraction die during or
+after treatment, governed by the observed treatment-outcome fractions and the
+conditional probability of death given loss to follow-up. Among missed cases, a
+fraction die undiagnosed. Both are spread over the detectable-to-death delay
+$\phi^{\text{mort}}$:
+
+$$
+\text{AllDeaths}_t = \sum_{i\ge 0}\Big[\text{Notified}_{t-i}\big(\mathrm{pMort}_{t-i}+\mathrm{pAban}_{t-i}\,p_{\text{m}\mid\text{aban}}\big) + \text{Missed}_{t-i}\,p_{\text{m}\mid\text{undx}}\Big]\phi^{\text{mort}}_i .
+$$
+
+The two observation channels are Poisson, with the population offset $\text{pop}_t$
+converting per-capita rates to expected counts:
+
+$$
+\text{SINAN}_t \sim \text{Poisson}\big(\text{pop}_t\,\text{Notified}_t\big),
+\qquad
+\text{SIM}_t \sim \text{Poisson}\big(\text{pop}_t\,\text{AllDeaths}_t\,\rho_t\big),
+$$
+
+where $\rho_t$ is the death-reporting adjustment (@sec-deathadj). Information from
+SINAN and SIM about death and loss to follow-up is recorded by notification date,
+so the treated-death thinning is applied at the notification month, consistent
+with @chitwood2025disruptions.
+
+## Fixed delay distributions
+
+The three delays are fixed (not estimated), taken from @chitwood2025disruptions
+and discretised to per-month probability mass functions, truncated at the stated
+maxima and renormalised:
+
+| Delay | Distribution | Mean (months) | Max (months) |
+|---|---|---|---|
+| Infection to symptom onset | Weibull(shape 1.75, scale 25) | 22.3 | 60 |
+| Symptom onset to detectable | Gamma(shape 10, rate 4) | 2.5 | 7 |
+| Detectable to death | Gamma(shape 12, rate 3) | 4.0 | 10 |
+
+## Latent time structure
+
+Log-incidence and logit-detection are smooth functions of time with three
+components, rather than a single log-linear trend with one break. For incidence,
+
+$$
+\log \lambda_t = \alpha_{\lambda} + \mathbf{B}_t\boldsymbol{\beta}_{\lambda}
+  + \mathbf{S}_t\boldsymbol{\omega}_{\lambda}
+  + c^{\text{lev}}_{\lambda}\,\mathrm{COVID}^{\text{lev}}_t
+  + c^{\text{slo}}_{\lambda}\,\mathrm{COVID}^{\text{slo}}_t ,
+$$
+
+and identically for $\operatorname{logit}\delta_t$ with its own coefficients plus
+a GeneXpert term $\beta_x\,\mathrm{Xpert}_t$. Here:
+
+- $\mathbf{B}_t$ is a penalised cubic B-spline basis on coarse (roughly
+  annual-to-biannual) knots, capturing the smooth long-run trend. The spline
+  coefficients carry a first-order random-walk smoothing prior in a non-centred
+  parameterisation.
+- $\mathbf{S}_t$ is a Fourier harmonic basis (two harmonics) for the cyclic
+  seasonal effect.
+- $\mathrm{COVID}^{\text{lev}}_t$ and $\mathrm{COVID}^{\text{slo}}_t$ encode an
+  explicit level-and-slope shock from April 2020 onward, modelling the pandemic
+  disruption.
+
+We deliberately do **not** include a monthly first-order autoregressive random
+walk: it overfit and failed to converge in @chitwood2025disruptions and is
+excluded here.
+
+## Time-varying death-reporting adjustment {#sec-deathadj}
+
+@chitwood2025disruptions use a static death-reporting adjustment. Over the full
+2003-2023 window we instead model it as a logit-linear function of time and the
+ill-defined-cause fraction, following the structure of @chitwood2021bes:
+
+$$
+\rho_t = \operatorname{logit}^{-1}\!\big(\theta_0 + \theta_{\text{time}}\,\text{year}_t + \theta_{\text{idc}}\,\mathrm{IDC}_t\big).
+$$
+
+This lets improving death registration (a falling IDC fraction and a secular time
+trend) be separated from changes in true incidence and detection. The biological
+case-fatality parameters are held constant over time; only the reporting
+adjustment drifts.
+
+## Priors
+
+The natural-history priors are load bearing and are taken from
+@chitwood2025disruptions and @chitwood2021bes:
+
+| Parameter | Meaning | Prior |
+|---|---|---|
+| $p_{\text{m}\mid\text{undx}}$ | death given undiagnosed | Beta(113, 87), mean 0.565 |
+| $p_{\text{m}\mid\text{aban}}$ | death given loss to follow-up | Beta(10, 190), mean 0.05 |
+| $\alpha_{\lambda}$, $\boldsymbol{\beta}_{\lambda}$ | incidence level and trend/COVID | Normal(0, 10) |
+| $\alpha_{\delta}$, detection coefficients | detection level and trend/COVID | Normal(0, 1) |
+| $\theta_0$, $\theta_{\text{idc}}$ | death-adjustment intercept, IDC coef | Normal(0, 1) |
+| $\theta_{\text{time}}$ | death-adjustment time trend (per year) | Normal(0, 0.05) |
+
+The fixed-delay kernels and the observed treatment-outcome fractions enter as
+data. The incidence intercept is centred at a realistic per-capita log rate to
+aid initialisation; this is a numerical centring choice and not an informative
+constraint.
+
+# Inference
+
+The model is written in Stan and fit with cmdstanr, one state at a time; a joint
+hierarchical fit across all 27 states did not converge in
+@chitwood2025disruptions and is not used. Each state is sampled with four chains.
+Convergence is assessed with $\hat{R}$ (target $< 1.01$), bulk and tail effective
+sample size, and the number of divergent transitions, computed over the
+incidence and detection series and all sampled coefficients, not only a few
+scalars. We perform a prior predictive check before fitting and a per-state
+posterior predictive check against observed notifications and deaths after
+fitting. Convergence on the 252-month series is the hardest part; we address it by
+reparameterisation (non-centred trend and seasonal terms, informative
+initialisation of the per-capita intercept) rather than only raising the sampler
+target acceptance.
+
+The implementation is validated by a recovery test: data simulated from the same
+generative process with known incidence, detection, COVID, and death-adjustment
+parameters are fit, and the model is required to recover the latent series
+(interval coverage and correlation) and the signs of the structural terms. An R
+implementation of the model's deterministic core is checked to reproduce the
+simulator's expected counts exactly, so the simulator and the Stan model are
+provably the same data-generating process.
+
+# Reproducibility and software
+
+All data processing is in R with data.table; inference is in Stan via cmdstanr.
+The pipeline is a `targets` directed acyclic graph: raw SINAN, SIM, and IBGE
+inputs are cached, the state-month panel is assembled, and the 27 per-state fits
+run as dynamic branches. Every stochastic step is seeded, including the cmdstanr
+fit and the R-side initialisation; paths are relative to the project root; and all
+artefacts under `outputs/` are regenerable from code and inputs. Package versions
+are pinned with renv and the cmdstan version is recorded with each fit.
+
+# Limitations
+
+TB deaths are defined by underlying cause only, which undercounts deaths where TB
+is a contributing cause. The GeneXpert and treatment-outcome covariate
+definitions, the exact ill-defined-cause code set, and the population-denominator
+reconciliation across the 2010 and 2022 censuses are recorded as decisions
+pending confirmation. The death-reporting adjustment is identified from the data
+and the IDC covariate but is only weakly anchored to external coverage estimates;
+this is the most consequential assumption and is examined in sensitivity
+analysis.
+
+# References
+
+::: {#refs}
+:::

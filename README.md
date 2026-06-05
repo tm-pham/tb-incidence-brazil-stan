@@ -83,9 +83,10 @@ priors.
 All commands run from the repo root (where `_targets.R` lives). The pipeline is a
 [targets](https://docs.ropensci.org/targets/) DAG: a **prepare** step (read the
 local SINAN-TB notification export, fetch SIM and IBGE) that caches the raw
-tables to `data/interim/`, then a deterministic **assemble** step that writes the
-Stan data list to `outputs/stan_data/tb_stan_data.rds` with a vintage-stamped
-report in `outputs/logs/`.
+records to `data/interim/`, then a deterministic **assemble** step that writes the
+state-month panel to `outputs/stan_data/tb_state_month_panel.rds` with a
+diagnostics report in `outputs/logs/`, and finally a per-state **fit** step
+(needs cmdstan) writing `outputs/estimates/tb_incidence_estimates.rds`.
 
 **Sources** (aggregated to **state x year-month**, 2003-2023). SINAN-TB
 notifications are read from a local export placed in `data/raw/TB_notifications/`
@@ -109,9 +110,10 @@ Or drive `targets` directly in an R session (working directory = repo root;
 opening the `.Rproj` in RStudio sets it for you):
 
 ```r
-targets::tar_make()             # run / refresh the whole pipeline
-targets::tar_read(stan_data)    # inspect the assembled Stan data list
-targets::tar_visnetwork()       # view the DAG
+targets::tar_make()                 # run / refresh the whole pipeline
+targets::tar_read(assembled)        # inspect the assembled state-month panel
+targets::tar_read(state_estimate)   # per-state incidence/detection estimates (after fitting)
+targets::tar_visnetwork()           # view the DAG
 ```
 
 The first run hits DATASUS/IBGE (via `microdatasus` / `sidrar`), so run it where
@@ -119,7 +121,22 @@ those are reachable. Re-running only redoes what changed: after the one networke
 fetch, assembly rebuilds offline from the `data/interim/` cache. Override the
 analysis window with the `TB_YEAR_START` / `TB_YEAR_END` / `TB_UF` environment
 variables (defaults in `code/00_config/config.R`). Stage details are in
-`code/02_data_processing/README.md`.
+`code/02_data_processing/README.md`; the model is described in
+`code/03_modeling/README.md` and `code/08_reports/methods.qmd`.
+
+### Operational notes (hard-won)
+
+- **Do not `tar_destroy()` casually.** The SIM pull from DATASUS can take hours;
+  destroying the store forces a full re-fetch. To pick up code changes just
+  `git pull` and `tar_make()` (changed functions invalidate only their downstream
+  targets). The SIM fetch is self-healing: it re-fetches only missing state-years
+  and asserts state-month completeness, so a DATASUS FTP timeout cannot silently
+  become "zero deaths".
+- **Validate the model before real fits:** `RUN_RECOVERY_TEST=1 Rscript
+  code/07_tests/testthat.R` compiles the Stan model and checks it recovers known
+  incidence/detection from simulated data (needs cmdstan).
+- **SIDRA table IDs are configurable** in `code/00_config/config.R`; a failed
+  population fetch prints the returned column names so the IDs can be repointed.
 
 ## Reviewing
 
