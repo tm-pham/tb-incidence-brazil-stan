@@ -113,14 +113,18 @@ prepare_stan_data <- function(notifications, deaths, population,
   data.table::set(dt, j = "deaths", value = as.integer(dt$deaths))
 
   # --- Covariates (left-joined; undefined cells stay NA and are reported) --
-  join_cov <- function(dt, cov, cols) {
-    if (is.null(cov)) return(dt)
-    cov <- data.table::as.data.table(cov)
-    .require_cols(cov, c("uf", "year", "month", cols), "covariate")
-    cov[dt, on = c("uf", "year", "month")]
+  # From idc we also carry all-cause deaths (n_deaths) as `allcause_deaths`: the
+  # denominator of the IDC fraction and, crucially, the definitive SIM-gap signal
+  # (every state-month has all-cause deaths, so zero means a download gap, not a
+  # true zero) used by the panel diagnostics.
+  if (!is.null(idc)) {
+    idc <- data.table::as.data.table(idc)
+    icols <- c("uf", "year", "month", "idc")
+    if ("n_deaths" %in% names(idc)) icols <- c(icols, "n_deaths")
+    j <- idc[, ..icols]
+    if ("n_deaths" %in% names(j)) data.table::setnames(j, "n_deaths", "allcause_deaths")
+    dt <- merge(dt, j, by = c("uf", "year", "month"), all.x = TRUE, sort = FALSE)
   }
-  # NB cov[dt] keeps dt's rows; reorder columns afterwards.
-  if (!is.null(idc))       dt <- merge(dt, idc[, .(uf, year, month, idc)], by = c("uf","year","month"), all.x = TRUE, sort = FALSE)
   if (!is.null(genexpert)) dt <- merge(dt, genexpert[, .(uf, year, month, genexpert_share)], by = c("uf","year","month"), all.x = TRUE, sort = FALSE)
   if (!is.null(treatment)) dt <- merge(dt, treatment[, .(uf, year, month, pri_mort_t, pri_aban_t)], by = c("uf","year","month"), all.x = TRUE, sort = FALSE)
   data.table::setorder(dt, uf, year, month)

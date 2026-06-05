@@ -38,19 +38,34 @@ panel_diagnostics <- function(assembled, genexpert_era_year = 2014L,
   }
 
   # --- SIM-gap detection ----------------------------------------------------
-  # (a) any state-year with zero total TB deaths.
-  dy <- p[, .(deaths = sum(deaths)), by = .(uf, year)]
-  zsy <- dy[deaths == 0]
-  add(nrow(zsy) > 0, sprintf(
-    "%d state-year(s) with ZERO total TB deaths (possible SIM gap): %s",
-    nrow(zsy), paste0(zsy$uf, "/", zsy$year, collapse = ", ")))
-  # (b) a high-burden state with any zero-death month.
-  st <- p[, .(tot = sum(deaths), zero_months = sum(deaths == 0)), by = uf]
-  susp <- st[tot >= big_state_min_rate * n_months & zero_months > 0]
-  add(nrow(susp) > 0, sprintf(
-    "state(s) averaging >=%g deaths/month yet with zero-death month(s) (check SIM): %s",
-    big_state_min_rate,
-    paste0(susp$uf, "(", susp$zero_months, "mo)", collapse = ", ")))
+  # DEFINITIVE when all-cause deaths are available: every state-month has
+  # hundreds of all-cause deaths, so an absent/zero all-cause cell is a download
+  # gap, whereas zero TB deaths with all-cause present is a real low-count zero
+  # (small state, early year, poor registration) and is NOT flagged. Falls back
+  # to a TB-only heuristic when all-cause is not carried (e.g. synthetic panels).
+  zero_tb_months <- p[deaths == 0, .N]
+  if ("allcause_deaths" %in% names(p)) {
+    gaps <- p[is.na(allcause_deaths) | allcause_deaths == 0]
+    add(nrow(gaps) > 0, sprintf(
+      "%d state-month(s) with ZERO all-cause SIM deaths (download gap, refetch): %s",
+      nrow(gaps), paste0(gaps$uf, "/", gaps$year, "-", gaps$month, collapse = ", ")))
+    # also flag if all-cause looks implausibly thin (possible partial truncation)
+    thin <- p[!is.na(allcause_deaths) & allcause_deaths > 0 & allcause_deaths < 10]
+    add(nrow(thin) > 0, sprintf(
+      "%d state-month(s) with <10 all-cause SIM deaths (possible partial gap): %s",
+      nrow(thin), paste0(thin$uf, "/", thin$year, "-", thin$month, collapse = ", ")))
+  } else {
+    dy <- p[, .(deaths = sum(deaths)), by = .(uf, year)]
+    zsy <- dy[deaths == 0]
+    add(nrow(zsy) > 0, sprintf(
+      "%d state-year(s) with ZERO total TB deaths (no all-cause check available): %s",
+      nrow(zsy), paste0(zsy$uf, "/", zsy$year, collapse = ", ")))
+    st <- p[, .(tot = sum(deaths), zero_months = sum(deaths == 0)), by = uf]
+    susp <- st[tot >= big_state_min_rate * n_months & zero_months > 0]
+    add(nrow(susp) > 0, sprintf(
+      "state(s) averaging >=%g deaths/month yet with zero-death month(s): %s",
+      big_state_min_rate, paste0(susp$uf, "(", susp$zero_months, "mo)", collapse = ", ")))
+  }
 
   # --- Covariate trajectories (the load-bearing time-varying signal) -------
   trend <- p[, .(idc = mean(idc), genexpert = mean(genexpert_share),
@@ -72,7 +87,7 @@ panel_diagnostics <- function(assembled, genexpert_era_year = 2014L,
     n_states = n_states, n_months = n_months, n_cells = nrow(p),
     total_notifications = sum(p$notifications),
     total_deaths = sum(p$deaths),
-    zero_death_months = p[deaths == 0, .N],
+    zero_death_months = zero_tb_months,
     trend = trend,
     per_state = p[, .(months = .N, notif = sum(notifications),
                       deaths = sum(deaths)), by = uf][order(uf)],

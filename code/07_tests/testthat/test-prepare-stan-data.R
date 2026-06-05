@@ -61,6 +61,18 @@ test_that("covariates join and undefined cells are reported as NA", {
   expect_equal(out$report$genexpert_missing, 2L * 24L - 1L)  # only one cell set
 })
 
+test_that("all-cause deaths (n_deaths) carry through from idc as allcause_deaths", {
+  pop <- make_pop()
+  notif <- data.table(uf = 35L, year = 2018L, month = 3L, notifications = 10L)
+  dth <- data.table(uf = integer(), year = integer(), month = integer(),
+                    deaths = integer())
+  idc <- data.table(uf = 35L, year = 2018L, month = 3L, idc = 0.1, n_deaths = 500L)
+  out <- do.call(prepare_stan_data, c(list(notif, dth, pop), args0(idc = idc)))
+  expect_true("allcause_deaths" %in% names(out$panel))
+  expect_equal(out$panel[uf == 35L & year == 2018L & month == 3L, allcause_deaths],
+               500L)
+})
+
 test_that("missing population denominator errors", {
   pop <- make_pop()[-1L]   # drop one grid cell
   notif <- data.table(uf = 35L, year = 2018L, month = 3L, notifications = 1L)
