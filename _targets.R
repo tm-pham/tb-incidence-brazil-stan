@@ -15,6 +15,10 @@ for (f in c("geo_utils.R", "load_notifications.R", "load_sim.R",
   source(here::here("code", "02_data_processing", f))
 }
 source(here::here("code", "04_diagnostics", "check_panel.R"))
+for (f in c("priors.R", "stan_data.R", "fit_models.R")) {
+  source(here::here("code", "03_modeling", f))
+}
+source(here::here("code", "05_analysis", "extract_estimates.R"))
 
 tar_option_set(packages = c("data.table", "here"))
 
@@ -117,10 +121,31 @@ list(
     dir.create(OUT_LOGS, recursive = TRUE, showWarnings = FALSE)
     diag <- panel_diagnostics(assembled)
     write_panel_report(diag, file.path(OUT_LOGS, "panel_diagnostics.txt"))
-  }, format = "file")
+  }, format = "file"),
 
-  # --- Modelling phase (placeholders): per-state fits over assembled$states,
-  # diagnostics, and the tidy state x year-month posterior-draw output.
-  # tar_target(fit_by_state, fit_base_model(stan_data_for_state(assembled, uf),
-  #            seed = GLOBAL_SEED), pattern = map(states))  # dynamic branching
+  # --- Modelling phase: fit tb_state_month.stan one state at a time (dynamic
+  # branching over the 27 states), then collect the tidy state x year-month
+  # incidence/detection estimates. Requires cmdstanr + a cmdstan toolchain, so
+  # these targets only build where Stan is installed; the data targets above run
+  # without it. Each state is seeded GLOBAL_SEED + uf.
+  tar_target(model_states, assembled$states),
+  tar_target(state_estimate, {
+    this_uf <- model_states
+    ps <- assembled$panel[uf == this_uf]
+    data.table::setorder(ps, year, month)
+    sd <- stan_data_from_panel(assembled, this_uf, start_month_of_year = 1L)
+    res <- fit_base_model(sd, seed = GLOBAL_SEED + this_uf)
+    dir.create(OUT_MODEL_FITS, recursive = TRUE, showWarnings = FALSE)
+    res$fit$save_object(file.path(OUT_MODEL_FITS, paste0("fit_uf_", this_uf, ".rds")))
+    est <- tidy_state_estimates(res, this_uf, ps$year, ps$month)
+    data.table::setattr(est, "diagnostics", res$diagnostics)
+    est
+  }, pattern = map(model_states)),
+
+  tar_target(incidence_estimates_file, {
+    dir.create(OUT_ESTIMATES, recursive = TRUE, showWarnings = FALSE)
+    p <- file.path(OUT_ESTIMATES, "tb_incidence_estimates.rds")
+    saveRDS(state_estimate, p)
+    p
+  }, format = "file")
 )
