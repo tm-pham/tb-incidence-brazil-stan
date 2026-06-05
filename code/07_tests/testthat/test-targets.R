@@ -15,7 +15,7 @@ test_that("_targets.R defines a valid pipeline manifest", {
                     "treatment", "population_monthly", "assembled",
                     "stan_panel_file", "panel_report_file",
                     "model_states", "state_estimate",
-                    "incidence_estimates_file") %in% manifest$name))
+                    "incidence_estimates_file", "incidence_plot_file") %in% manifest$name))
   deps <- manifest$command[manifest$name == "assembled"]
   expect_match(deps, "notifications")
   expect_match(deps, "tb_deaths")

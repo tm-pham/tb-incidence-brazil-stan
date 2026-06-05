@@ -19,6 +19,7 @@ for (f in c("priors.R", "stan_data.R", "fit_models.R")) {
   source(here::here("code", "03_modeling", f))
 }
 source(here::here("code", "05_analysis", "extract_estimates.R"))
+source(here::here("code", "06_visualization", "plot_estimates.R"))
 
 tar_option_set(packages = c("data.table", "here"))
 
@@ -160,6 +161,18 @@ list(
     dir.create(OUT_ESTIMATES, recursive = TRUE, showWarnings = FALSE)
     p <- file.path(OUT_ESTIMATES, "tb_incidence_estimates.rds")
     saveRDS(state_estimate, p)
+    p
+  }, format = "file"),
+
+  # --- Headline figure: per-state estimated incidence (median + 90% CI ribbon)
+  # overlaid with the observed notification rate; the gap is under-detection.
+  tar_target(incidence_plot_file, {
+    dir.create(OUT_FIGURES, recursive = TRUE, showWarnings = FALSE)
+    pd <- prepare_incidence_plot_data(state_estimate, assembled$panel,
+                                      annualize = TRUE)
+    g <- plot_state_incidence(pd)
+    p <- file.path(OUT_FIGURES, "state_incidence_vs_notifications.png")
+    ggplot2::ggsave(p, g, width = 16, height = 11, dpi = 150)
     p
   }, format = "file")
 )
