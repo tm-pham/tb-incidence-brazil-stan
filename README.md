@@ -1,5 +1,13 @@
 # Monthly state-level TB incidence and case detection in Brazil, 2003-2023
 
+> **Status: work in progress.** The data pipeline is built, tested, and
+> validated; the Stan model is implemented and its math is checked against the
+> simulator, but it has **not yet been validated on real data** (the recovery
+> test and the per-state fits run on a machine with cmdstan). Several
+> data-definition decisions are still pending confirmation (see
+> `literature/notes/priors.md`, "Open decisions"), and no incidence/detection
+> results are available yet.
+
 A **state-month mechanistic model** of tuberculosis **incidence** and
 **case-detection probability** for Brazil over **2003-2023 (252 monthly time
 points)**, from routinely collected SINAN notifications and SIM mortality data,
