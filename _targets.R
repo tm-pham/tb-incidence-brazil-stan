@@ -14,6 +14,7 @@ for (f in c("geo_utils.R", "load_notifications.R", "load_sim.R",
             "load_population.R", "prepare_stan_data.R")) {
   source(here::here("code", "02_data_processing", f))
 }
+source(here::here("code", "04_diagnostics", "check_panel.R"))
 
 tar_option_set(packages = c("data.table", "here"))
 
@@ -105,6 +106,15 @@ list(
       sprintf("treatment NA cells: %s", r$treatment_missing)
     ), file.path(OUT_LOGS, "data_processing_report.txt"))
     p
+  }, format = "file"),
+
+  # --- Automated plausibility diagnostics on the assembled panel. Writes a
+  # report and warns on red flags (SIM gaps, covariate trajectories, zero-death
+  # clustering) so the sanity checks run on every build, not by hand.
+  tar_target(panel_report_file, {
+    dir.create(OUT_LOGS, recursive = TRUE, showWarnings = FALSE)
+    diag <- panel_diagnostics(assembled)
+    write_panel_report(diag, file.path(OUT_LOGS, "panel_diagnostics.txt"))
   }, format = "file")
 
   # --- Modelling phase (placeholders): per-state fits over assembled$states,
