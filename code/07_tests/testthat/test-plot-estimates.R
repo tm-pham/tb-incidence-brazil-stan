@@ -23,6 +23,8 @@ test_that("prepare_incidence_plot_data joins and scales to per-100k", {
   expect_equal(unique(pd$notification_rate), 2)          # 20 / 1e6 * 1e5
   expect_equal(pd[uf == 35L, unique(uf_label)], "SP")
   expect_equal(pd[uf == 33L, unique(uf_label)], "RJ")
+  expect_equal(pd[uf == 35L, unique(uf_name)], "Sao Paulo")
+  expect_equal(pd[uf == 33L, unique(uf_name)], "Rio de Janeiro")
   expect_match(attr(pd, "rate_label"), "per month")
 })
 

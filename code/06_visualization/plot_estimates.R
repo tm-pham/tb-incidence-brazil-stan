@@ -22,7 +22,8 @@
 #' @return data.table(uf, uf_label, date, incidence, incidence_lo, incidence_hi,
 #'   notification_rate) with a `rate_label` attribute.
 prepare_incidence_plot_data <- function(estimates, panel, per = 1e5,
-                                        annualize = FALSE, uf_abbrev = UF_ABBREV) {
+                                        annualize = FALSE, uf_abbrev = UF_ABBREV,
+                                        uf_names = UF_NAMES) {
   estimates <- data.table::as.data.table(estimates)
   panel <- data.table::as.data.table(panel)
   for (col in c("incidence_rate", "incidence_lo", "incidence_hi")) {
@@ -39,13 +40,14 @@ prepare_incidence_plot_data <- function(estimates, panel, per = 1e5,
   d[, `:=`(
     date = as.Date(sprintf("%04d-%02d-01", year, month)),
     uf_label = unname(uf_abbrev[as.character(uf)]),
+    uf_name = unname(uf_names[as.character(uf)]),
     incidence = incidence_rate * mult,
     incidence_lo = incidence_lo * mult,
     incidence_hi = incidence_hi * mult,
     notification_rate = notifications / population * mult
   )]
   data.table::setorder(d, uf, date)
-  out <- d[, .(uf, uf_label, date, incidence, incidence_lo, incidence_hi,
+  out <- d[, .(uf, uf_label, uf_name, date, incidence, incidence_lo, incidence_hi,
                notification_rate)]
   data.table::setattr(out, "rate_label",
                       sprintf("TB cases per %s per %s", format(per, big.mark = ","),
@@ -59,12 +61,17 @@ prepare_incidence_plot_data <- function(estimates, panel, per = 1e5,
 #' @param states Optional vector of UF codes to restrict to.
 #' @param ncol Facet columns (default lets ggplot choose).
 #' @param free_y Per-state y-axis (states differ hugely in magnitude); default TRUE.
+#' @param facet_by "name" for the full state name (default) or "abbrev".
+#' @param ci_pct Credible-interval mass shown, for the subtitle (default 95).
 #' @return A ggplot object.
 plot_state_incidence <- function(plot_data, states = NULL, ncol = NULL,
-                                 free_y = TRUE) {
+                                 free_y = TRUE, facet_by = c("name", "abbrev"),
+                                 ci_pct = 95) {
   if (!requireNamespace("ggplot2", quietly = TRUE)) {
     stop("plot_state_incidence: ggplot2 is required.")
   }
+  facet_by <- match.arg(facet_by)
+  facet_var <- if (facet_by == "name") "uf_name" else "uf_label"
   pd <- data.table::as.data.table(plot_data)
   if (!is.null(states)) pd <- pd[uf %in% states]
   rate_label <- attr(plot_data, "rate_label") %||% "rate"
@@ -76,13 +83,13 @@ plot_state_incidence <- function(plot_data, states = NULL, ncol = NULL,
                        linewidth = 0.5) +
     ggplot2::geom_line(ggplot2::aes(y = notification_rate, colour = "Notification rate"),
                        linewidth = 0.5) +
-    ggplot2::facet_wrap(~uf_label,
+    ggplot2::facet_wrap(ggplot2::vars(.data[[facet_var]]),
                         scales = if (free_y) "free_y" else "fixed", ncol = ncol) +
     ggplot2::scale_colour_manual(values = cols, name = NULL) +
     ggplot2::scale_fill_manual(values = cols, guide = "none") +
     ggplot2::labs(x = NULL, y = rate_label,
                   title = "Estimated TB incidence vs observed notification rate, by state",
-                  subtitle = "Posterior median and 90% credible interval; the gap reflects under-detection") +
+                  subtitle = sprintf("Posterior median and %d%% credible interval; the gap reflects under-detection", ci_pct)) +
     ggplot2::theme_minimal(base_size = 10) +
     ggplot2::theme(legend.position = "bottom",
                    panel.grid.minor = ggplot2::element_blank())

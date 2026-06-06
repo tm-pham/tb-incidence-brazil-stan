@@ -9,16 +9,19 @@
 #' @param uf State code.
 #' @param year,month Integer vectors (length N_obs) giving the calendar of the
 #'   observed months, in the same order the Stan data used (month 1 first).
+#' @param prob Central credible-interval mass (default 0.95 -> 2.5%/97.5%).
 #' @return data.table(uf, year, month, incidence_rate_*, detection_*) with median
-#'   and 5%/95% quantiles, plus per-100k incidence for convenience.
-tidy_state_estimates <- function(res, uf, year, month) {
+#'   and lo/hi quantiles, plus per-100k incidence for convenience.
+tidy_state_estimates <- function(res, uf, year, month, prob = 0.95) {
   fit <- res$fit
+  a <- (1 - prob) / 2; b <- 1 - a              # e.g. 0.025 / 0.975 for 95%
   q <- function(var) {
-    # unname the quantiles: cmdstanr/posterior would otherwise name the columns
-    # "lo5%"/"hi95%" (from quantile()'s names) instead of "lo"/"hi".
-    s <- fit$summary(var, median = ~stats::median(.x),
-                     lo = ~unname(stats::quantile(.x, 0.05)),
-                     hi = ~unname(stats::quantile(.x, 0.95)))
+    # explicit functions (closing over a/b) and unname() so the columns are
+    # "lo"/"hi" rather than posterior's "lo2.5%"/"hi97.5%".
+    s <- fit$summary(var,
+                     median = function(x) stats::median(x),
+                     lo = function(x) unname(stats::quantile(x, a)),
+                     hi = function(x) unname(stats::quantile(x, b)))
     data.table::as.data.table(s)[, .(median, lo, hi)]
   }
   inc <- q("incidence_rate")
