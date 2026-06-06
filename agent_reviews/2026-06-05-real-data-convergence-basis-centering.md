@@ -30,3 +30,24 @@ two stay in agreement (forward test).
 If theta_time / covid_det_level still mix poorly after centering, the next levers
 are: fewer spline knots (less flexibility competing with the COVID and death-adj
 terms), or QR-orthogonalising the trend+seasonal design.
+
+## Update: centering alone insufficient -> orthonormalise (QR)
+
+A full real fit (SP, 4000 warmup, 2.4 h) showed the same R-hat 1.2 / ESS 17 AND
+100% of transitions hitting max treedepth. Two findings:
+- A footgun: the if(!exists()) source guards I had added meant an interactive
+  session that already had the functions loaded did NOT reload the updated
+  basis.R, so that run silently used the OLD uncentered basis. Guards removed
+  (source unconditionally; the files are side-effect free).
+- 100% treedepth saturation indicates strongly correlated geometry beyond the
+  intercept ridge -- the spline columns are correlated with each other.
+
+Fix: trend_basis() now also ORTHONORMALISES the centred basis (qr.Q(qr(.))), and
+the Stan trend coefficients become iid-normal (the coarse knots give the
+smoothness; this replaces the RW penalty -- a deliberate trade for convergence,
+still "a smooth trend on coarse knots" per CLAUDE.md). Orthonormal columns ->
+decorrelated coefficients -> the treedepth/ESS pathology should clear. Shared by
+simulator and Stan via build_design(); forward-agreement test still passes.
+
+Validate (clean R session): recovery test (recompiles Stan, must still recover),
+then SP FAST. If treedepth/ESS are healthy, proceed to the full fit / cluster.

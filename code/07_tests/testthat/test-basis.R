@@ -16,6 +16,13 @@ test_that("basis columns are mean-centered (no level direction)", {
   expect_true(all(abs(colMeans(S)) < 1e-9))
 })
 
+test_that("trend_basis is orthonormal (decorrelated geometry)", {
+  B <- trend_basis(120L, n_knots = 8L, degree = 3L)
+  G <- crossprod(B)                       # t(B) %*% B should be the identity
+  expect_equal(diag(G), rep(1, ncol(B)), tolerance = 1e-8)
+  expect_lt(max(abs(G[lower.tri(G)])), 1e-8)
+})
+
 test_that("seasonal_basis is cyclic with 12-month period", {
   S <- seasonal_basis(1:24, n_harmonics = 2L)
   expect_equal(ncol(S), 2L * 2L)          # 2 harmonics x (sin, cos)

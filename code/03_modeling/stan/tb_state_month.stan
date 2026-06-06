@@ -16,7 +16,8 @@
 //   SINAN ~ Poisson(pop .* Notified_obs)
 //   SIM   ~ Poisson(pop .* AllDeaths_obs .* DeathAdj)
 //
-// Trend is a penalised B-spline (RW1 prior on coefficients, non-centred);
+// Trend is a B-spline on coarse knots, mean-centred and orthonormalised in R
+// (iid-normal coefficients here; the coarse knots give the smoothness);
 // seasonal is a Fourier harmonic block; COVID is an explicit level+slope shock.
 // Delay kernels and all prior hyperparameters are passed as data (single source:
 // code/03_modeling/priors.R).
@@ -119,9 +120,11 @@ parameters {
 }
 
 transformed parameters {
-  // Non-centred RW1 spline coefficients and seasonal coefficients.
-  vector[K_trend] beta_trend_inc = cumulative_sum(z_trend_inc) * sigma_trend_inc;
-  vector[K_trend] beta_trend_det = cumulative_sum(z_trend_det) * sigma_trend_det;
+  // Non-centred coefficients. The trend basis is orthonormalised in R
+  // (trend_basis()), so the trend coefficients are iid-normal (no RW penalty);
+  // the coarse knots supply the smoothness. This decorrelates the geometry.
+  vector[K_trend] beta_trend_inc = z_trend_inc * sigma_trend_inc;
+  vector[K_trend] beta_trend_det = z_trend_det * sigma_trend_det;
   vector[H2] beta_season_inc = z_season_inc * sigma_season_inc;
   vector[H2] beta_season_det = z_season_det * sigma_season_det;
 

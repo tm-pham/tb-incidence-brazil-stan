@@ -22,19 +22,24 @@
 #' @param degree Spline degree (3 = cubic).
 #' @return Numeric matrix `n_total x (n_knots + degree)`.
 #'
-#' The columns are MEAN-CENTERED so the fitted trend `B %*% beta` has mean ~0 over
-#' the axis: the model intercept then carries the level and the spline carries
-#' only deviations. Without this, the level is shared between the intercept and
-#' the (unconstrained) spline coefficients -- a flat ridge that wrecks HMC mixing
-#' (observed on real data: R-hat ~1.2, ESS ~17 concentrated on inc_intercept and
-#' the later beta_trend coefficients).
+#' The columns are MEAN-CENTERED and then ORTHONORMALISED (QR). Centering removes
+#' the level direction (the intercept carries the level, the spline only
+#' deviations); orthonormalising decorrelates the spline columns. Together they
+#' fix the geometry that wrecked HMC on real data (R-hat ~1.2, ESS ~17, and 100%
+#' of transitions hitting max treedepth -- a strongly correlated posterior). With
+#' an orthonormal basis the trend coefficients get independent iid-normal priors
+#' in the Stan model (the coarse knots provide the smoothness; this replaces the
+#' RW penalty, a deliberate trade for identifiability/convergence). Because the
+#' centred columns are all orthogonal to the constant, the QR columns are too, so
+#' the basis stays mean-zero.
 trend_basis <- function(n_total, n_knots = 8L, degree = 3L) {
   tt <- seq_len(n_total)
   probs <- seq(0, 1, length.out = n_knots + 2L)[-c(1L, n_knots + 2L)]
   knots <- as.numeric(stats::quantile(tt, probs = probs))
   B <- splines::bs(tt, knots = knots, degree = degree, intercept = FALSE)
   B <- matrix(as.numeric(B), nrow = n_total)
-  sweep(B, 2L, colMeans(B))                    # center: remove the level direction
+  B <- sweep(B, 2L, colMeans(B))               # center: remove the level direction
+  qr.Q(qr(B))                                  # orthonormalise: decorrelate columns
 }
 
 #' Seasonal harmonic basis (Fourier) for a cyclic monthly effect.
