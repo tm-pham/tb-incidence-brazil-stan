@@ -21,12 +21,20 @@
 #' @param n_knots Number of interior knots (trend flexibility).
 #' @param degree Spline degree (3 = cubic).
 #' @return Numeric matrix `n_total x (n_knots + degree)`.
+#'
+#' The columns are MEAN-CENTERED so the fitted trend `B %*% beta` has mean ~0 over
+#' the axis: the model intercept then carries the level and the spline carries
+#' only deviations. Without this, the level is shared between the intercept and
+#' the (unconstrained) spline coefficients -- a flat ridge that wrecks HMC mixing
+#' (observed on real data: R-hat ~1.2, ESS ~17 concentrated on inc_intercept and
+#' the later beta_trend coefficients).
 trend_basis <- function(n_total, n_knots = 8L, degree = 3L) {
   tt <- seq_len(n_total)
   probs <- seq(0, 1, length.out = n_knots + 2L)[-c(1L, n_knots + 2L)]
   knots <- as.numeric(stats::quantile(tt, probs = probs))
   B <- splines::bs(tt, knots = knots, degree = degree, intercept = FALSE)
-  matrix(as.numeric(B), nrow = n_total)
+  B <- matrix(as.numeric(B), nrow = n_total)
+  sweep(B, 2L, colMeans(B))                    # center: remove the level direction
 }
 
 #' Seasonal harmonic basis (Fourier) for a cyclic monthly effect.
@@ -34,12 +42,15 @@ trend_basis <- function(n_total, n_knots = 8L, degree = 3L) {
 #' @param month_of_year Integer vector in 1..12.
 #' @param n_harmonics Number of sin/cos harmonic pairs.
 #' @return Numeric matrix `length(month_of_year) x (2 * n_harmonics)`.
+#'   Columns are mean-centered (as for the trend) so seasonality does not carry
+#'   any of the level.
 seasonal_basis <- function(month_of_year, n_harmonics = 2L) {
   cols <- lapply(seq_len(n_harmonics), function(k) {
     ang <- 2 * pi * k * month_of_year / 12
     cbind(sin(ang), cos(ang))
   })
-  do.call(cbind, cols)
+  S <- do.call(cbind, cols)
+  sweep(S, 2L, colMeans(S))
 }
 
 #' Assemble the full extended-axis design for one state.

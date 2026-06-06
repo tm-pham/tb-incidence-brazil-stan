@@ -9,6 +9,13 @@ test_that("trend_basis has the right shape and no NA", {
   expect_false(anyNA(B))
 })
 
+test_that("basis columns are mean-centered (no level direction)", {
+  B <- trend_basis(120L, n_knots = 8L, degree = 3L)
+  expect_true(all(abs(colMeans(B)) < 1e-9))
+  S <- seasonal_basis(1:120, n_harmonics = 2L)
+  expect_true(all(abs(colMeans(S)) < 1e-9))
+})
+
 test_that("seasonal_basis is cyclic with 12-month period", {
   S <- seasonal_basis(1:24, n_harmonics = 2L)
   expect_equal(ncol(S), 2L * 2L)          # 2 harmonics x (sin, cos)
