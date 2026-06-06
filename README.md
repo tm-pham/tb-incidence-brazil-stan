@@ -48,9 +48,15 @@ priors are load bearing; see `CLAUDE.md`.
 
 ## Status
 
-Project scaffolding, data loaders, and reviewer tooling. The state-month model,
-pipeline, and estimates are built phase by phase. Real-data sampling will run on
-the Notchpeak cluster.
+Work in progress. The state-month data pipeline (SINAN/SIM/IBGE -> 27 x 252
+panel) is built, tested, and validated. The Stan model is implemented and
+**validated on simulated data**: the recovery test recovers known incidence,
+detection, and the time-varying death-reporting adjustment with honest interval
+coverage. It has **not yet been fit to the real data** -- the per-state sampling
+(~15-30 min/state) will run on the Notchpeak cluster -- and several
+data-definition decisions are still pending confirmation (see
+`literature/notes/priors.md`, "Open decisions"). No incidence/detection results
+are available yet.
 
 ## Layout
 
