@@ -4,11 +4,12 @@
 # (stan_data_for_state -> this) and simulated data (recovery test). All prior
 # hyperparameters come from priors.R, so the model and simulator share one source.
 
-# Guarded sourcing: avoid re-sourcing (and any future top-level side effects) when
-# these have already been loaded by another file in the session.
-if (!exists("build_delay_kernels")) source(here::here("code", "01_functions", "delays.R"))
-if (!exists("build_design"))        source(here::here("code", "01_functions", "basis.R"))
-if (!exists("priors"))              source(here::here("code", "03_modeling", "priors.R"))
+# These function files are side-effect free, so re-sourcing is safe and is done
+# unconditionally -- guards like if(!exists()) would skip reloading updated code
+# in an interactive session (a real footgun).
+source(here::here("code", "01_functions", "delays.R"))
+source(here::here("code", "01_functions", "basis.R"))
+source(here::here("code", "03_modeling", "priors.R"))
 
 #' Build the Stan data list for one state.
 #'
