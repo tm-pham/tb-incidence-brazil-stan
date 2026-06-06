@@ -14,9 +14,11 @@
 tidy_state_estimates <- function(res, uf, year, month) {
   fit <- res$fit
   q <- function(var) {
+    # unname the quantiles: cmdstanr/posterior would otherwise name the columns
+    # "lo5%"/"hi95%" (from quantile()'s names) instead of "lo"/"hi".
     s <- fit$summary(var, median = ~stats::median(.x),
-                     lo = ~stats::quantile(.x, 0.05),
-                     hi = ~stats::quantile(.x, 0.95))
+                     lo = ~unname(stats::quantile(.x, 0.05)),
+                     hi = ~unname(stats::quantile(.x, 0.95)))
     data.table::as.data.table(s)[, .(median, lo, hi)]
   }
   inc <- q("incidence_rate")

@@ -75,4 +75,15 @@ test_that("the model recovers known monthly incidence and detection", {
   expect_lt(th$q95[th$variable == "covid_det_level"], 0)
   covid_months <- seq.int(124L, n_obs)
   expect_gt(cor(sm_inc$median[covid_months], truth$true_gamma[covid_months]), 0.8)
+
+  # Exercise the real estimate-extraction path (tidy_state_estimates uses
+  # fit$summary, which the mock test cannot replicate). Catches the posterior
+  # quantile-naming bug.
+  source(here::here("code", "05_analysis", "extract_estimates.R"))
+  est <- tidy_state_estimates(res, uf = 1L, year = rep(2010L, n_obs),
+                              month = rep(1:12, length.out = n_obs))
+  expect_equal(nrow(est), n_obs)
+  expect_true(all(c("incidence_rate", "incidence_lo", "incidence_hi",
+                    "incidence_per100k", "detection") %in% names(est)))
+  expect_false(anyNA(est$incidence_rate) || anyNA(est$incidence_lo))
 })
