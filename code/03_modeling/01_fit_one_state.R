@@ -23,6 +23,12 @@ source(here("code", "05_analysis", "extract_estimates.R"))
 target_uf  <- as.integer(Sys.getenv("TB_FIT_UF", "35"))
 fast       <- nzchar(Sys.getenv("TB_FIT_FAST"))
 n_chains   <- as.integer(Sys.getenv("TB_FIT_CHAINS", "4"))
+# Sampler effort. Defaults: full = 4000 warmup, FAST = 1500. Override directly
+# with TB_FIT_WARMUP / TB_FIT_SAMPLING / TB_FIT_ADAPT_DELTA to run longer or
+# tighten the sampler (e.g. TB_FIT_WARMUP=6000 TB_FIT_ADAPT_DELTA=0.995).
+warmup     <- as.integer(Sys.getenv("TB_FIT_WARMUP", if (fast) "1500" else "4000"))
+sampling   <- as.integer(Sys.getenv("TB_FIT_SAMPLING", "1000"))
+adapt      <- as.numeric(Sys.getenv("TB_FIT_ADAPT_DELTA", "0.99"))
 
 # Load the assembled panel (prefer the targets store; fall back to the rds).
 assembled <- tryCatch(
@@ -34,13 +40,15 @@ if (!target_uf %in% assembled$states) {
 }
 
 message("Fitting uf ", target_uf, " (", UF_ABBREV[[as.character(target_uf)]], "); ",
-        if (fast) "FAST (1500 warmup)" else "full (4000 warmup)", ", ",
-        n_chains, " chains. This is one ~250-month series; expect tens of minutes.")
+        warmup, " warmup + ", sampling, " sampling, ", n_chains,
+        " chains, adapt_delta ", adapt,
+        ". One ~250-month series; expect tens of minutes to a few hours.")
 
 sd <- stan_data_from_panel(assembled, target_uf, start_month_of_year = 1L)
 res <- fit_base_model(
   sd, seed = GLOBAL_SEED + target_uf, chains = n_chains, parallel_chains = n_chains,
-  iter_warmup = if (fast) 1500L else 4000L, iter_sampling = 1000L, refresh = 200L)
+  iter_warmup = warmup, iter_sampling = sampling, adapt_delta = adapt,
+  refresh = 200L)
 
 cat("\n== convergence diagnostics ==\n"); str(res$diagnostics)
 cat("cmdstan version:", res$cmdstan_version, "\n")
