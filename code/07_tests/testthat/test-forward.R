@@ -37,7 +37,7 @@ test_that("the forward model stays finite over the full 252-month axis", {
   kernels <- build_delay_kernels(pr$delays)
   n_obs <- 252L                                   # 2003-2023
   design <- build_design(n_obs, n_pre = default_n_pre(pr), start_month_of_year = 1L,
-                         covid_break = 208L, n_trend_knots = 8L, n_harmonics = 2L)
+                         covid_break = 208L, n_trend_knots = 6L, n_harmonics = 2L)
   params <- default_true_params(design, seed = 2L)
   cov <- synthetic_covariates(n_obs)
   sd <- build_stan_model_data(

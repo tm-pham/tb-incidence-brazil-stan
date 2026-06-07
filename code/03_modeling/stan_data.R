@@ -87,7 +87,7 @@ build_stan_model_data <- function(obs, design, kernels, pr = priors(),
 #' @param n_trend_knots,n_harmonics Basis sizes.
 #' @param ... Passed to build_stan_model_data (e.g. prior_only).
 stan_data_from_panel <- function(assembled, uf, start_month_of_year = 1L,
-                                 covid_break = NULL, n_trend_knots = 8L,
+                                 covid_break = NULL, n_trend_knots = 6L,
                                  n_harmonics = 2L, pr = priors(), ...) {
   source(here::here("code", "02_data_processing", "prepare_stan_data.R"), local = TRUE)
   sd1 <- stan_data_for_state(assembled, uf)

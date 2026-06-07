@@ -51,8 +51,8 @@ priors <- function() {
     det_coef      = c(mean = 0, sd = 1),    # detection trend/COVID coefs
 
     # --- Smoothness / extension priors (no 2025 precedent; our choice) ---
-    trend_sd       = c(mean = 0, sd = 1),   # half-Normal on the spline-coef RW penalty
-    season_sd      = c(mean = 0, sd = 1),   # half-Normal on seasonal coefs
+    trend_sd       = c(mean = 0, sd = 0.5), # half-Normal on the (orthonormal) trend coefs; regularises amplitude/funnel
+    season_sd      = c(mean = 0, sd = 0.5), # half-Normal on seasonal coefs
     genexpert_coef = c(mean = 0, sd = 1)    # GeneXpert detection covariate coef
   )
 }

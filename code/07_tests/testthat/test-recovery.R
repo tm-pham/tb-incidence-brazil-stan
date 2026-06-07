@@ -19,7 +19,7 @@ test_that("the model recovers known monthly incidence and detection", {
   n_obs <- 156L                                   # 13 years, COVID inside window
   n_pre <- default_n_pre(pr)
   design <- build_design(n_obs, n_pre, start_month_of_year = 1L,
-                         covid_break = 124L, n_trend_knots = 8L, n_harmonics = 2L)
+                         covid_break = 124L, n_trend_knots = 6L, n_harmonics = 2L)
   params <- default_true_params(design, seed = 1L)
   cov <- synthetic_covariates(n_obs, population = 2e6)
   truth <- simulate_state_month(design, kernels, params, cov, seed = 99L)
