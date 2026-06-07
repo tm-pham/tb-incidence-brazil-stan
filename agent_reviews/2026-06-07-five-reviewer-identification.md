@@ -13,6 +13,23 @@ sign flip), plus cover_inc 0.776 and covid_inc_level q95 0.042 (>0).
 Failing recovery test (5 assertions) + Critical/High findings from the stan,
 epidemiology, and reproducibility reviewers.
 
+## RESOLUTION UPDATE (2026-06-07, commit 9c2a4bb)
+
+C1 (the Critical identification ridge) is RESOLVED. Implemented the consensus fix:
+informative, sign-reconciled `theta_idc ~ Normal(-7.6, 2.0)` (Chitwood 2021
+two-point anchors mapped to our completeness convention; sign NEGATIVE), `theta0`
+re-centred to `Normal(2.0, 0.20)` (completeness ~0.75 at typical idc ~0.12),
+`genexpert_coef` constrained `>0`, and a separate tightened detection trend
+`trend_sd_det ~ half-N(0,0.15)` (H1). The gated recovery test now PASSES 16/16:
+detection recovery 0.34 -> pass (>0.78), death_adj -1.0 -> pass (>0.83), incidence
+still passes, coverage and convergence hold. Caveat: the recovery truth was set to
+match the prior centre, so this confirms identifiability GIVEN the prior; the PI
+should still confirm the -7.6 anchor magnitude against the 2021 supplement.
+
+Still open (High): H2 NA covariate guard, H3 methods.qmd separation wording, H4
+renv/cmdstan pinning, H5 restore num_divergent==0 (geometry), H6 covid_inc_level
+check.
+
 ## IMPORTANT caveat — stale checkout for 3 of 5 reviewers
 
 The container's local git kept reverting to a stale phantom commit `1f2409c`
