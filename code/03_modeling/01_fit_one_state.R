@@ -29,6 +29,7 @@ n_chains   <- as.integer(Sys.getenv("TB_FIT_CHAINS", "4"))
 warmup     <- as.integer(Sys.getenv("TB_FIT_WARMUP", if (fast) "1500" else "4000"))
 sampling   <- as.integer(Sys.getenv("TB_FIT_SAMPLING", "1000"))
 adapt      <- as.numeric(Sys.getenv("TB_FIT_ADAPT_DELTA", "0.99"))
+treedepth  <- as.integer(Sys.getenv("TB_FIT_TREEDEPTH", "12"))
 
 # Load the assembled panel (prefer the targets store; fall back to the rds).
 assembled <- tryCatch(
@@ -48,7 +49,7 @@ sd <- stan_data_from_panel(assembled, target_uf, start_month_of_year = 1L)
 res <- fit_base_model(
   sd, seed = GLOBAL_SEED + target_uf, chains = n_chains, parallel_chains = n_chains,
   iter_warmup = warmup, iter_sampling = sampling, adapt_delta = adapt,
-  refresh = 200L)
+  max_treedepth = treedepth, refresh = 200L)
 
 cat("\n== convergence diagnostics ==\n"); str(res$diagnostics)
 cat("cmdstan version:", res$cmdstan_version, "\n")
