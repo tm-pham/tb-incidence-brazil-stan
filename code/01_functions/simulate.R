@@ -100,27 +100,39 @@ simulate_state_month <- function(design, kernels, params, covariates,
 
 #' Plausible TRUE parameters that produce realistic monthly counts.
 #'
-#' The incidence intercept is set on the per-capita log scale (~ -9.6 gives a
-#' few hundred monthly symptomatic cases per 1e6 people); spline/seasonal
-#' coefficients are small, seeded perturbations. NOT drawn from the wide fitting
-#' priors (those let the data speak; here we need realistic synthetic truth).
+#' The incidence intercept is on the per-capita log scale (~ -9.6 gives a few
+#' hundred monthly symptomatic cases per 1e6 people). The long-run trends are
+#' DETERMINISTIC and projected onto the (orthonormal) trend basis so the truth
+#' carries real, RECOVERABLE signal that survives the heavy convolution
+#' smoothing: incidence declines ~40% over the axis (Brazil TB, 2003-2023) and
+#' detection rises, with most of detection's movement carried by the GeneXpert
+#' covariate (a distinct post-2014 shape that does not confound the smooth
+#' death-reporting trend). Because the basis is orthonormal, `B %*% (B' target)`
+#' is the L2 projection of the target onto the spline span (a near-exact match
+#' for a smooth target). Every true value sits INSIDE the model's priors
+#' (genexpert_coef 0.8 < N(0,1); theta_idc -1.0 < N(0,1); theta_time 0.03 <
+#' N(0,0.05)), so recovery is not fighting the prior. These are realistic
+#' synthetic truth, not draws from the wide fitting priors.
 #'
 #' @param design Output of `build_design()`.
-#' @param seed Integer seed.
+#' @param seed Integer seed (only the small seasonal coefficients are random).
 #' @return A named list consumable by `simulate_state_month()`.
 default_true_params <- function(design, seed = 1L) {
   K <- ncol(design$B_trend); H2 <- ncol(design$S_season)
+  B <- design$B_trend
+  axis <- as.numeric(scale(seq_len(nrow(B))))          # standardised time, mean 0
+  proj <- function(target) as.numeric(crossprod(B, target))  # B' target (B orthonormal)
   withr::with_seed(seed, list(
     inc_intercept   = -9.6,
-    beta_trend_inc  = cumsum(stats::rnorm(K, 0, 0.12)),
+    beta_trend_inc  = proj(-0.15 * axis),              # smooth ~40% decline (log scale)
     beta_season_inc = stats::rnorm(H2, 0, 0.05),
-    covid_inc_level = -0.15, covid_inc_slope = 0.002,
+    covid_inc_level = -0.20, covid_inc_slope = 0.004,
     det_intercept   = 0.3,
-    beta_trend_det  = cumsum(stats::rnorm(K, 0, 0.08)),
+    beta_trend_det  = proj(0.08 * axis),               # small smooth detection rise
     beta_season_det = stats::rnorm(H2, 0, 0.03),
-    covid_det_level = -0.20, covid_det_slope = 0.003,
-    genexpert_coef  = 0.5,
-    theta0 = 1.0, theta_time = 0.02, theta_idc = -1.5,
+    covid_det_level = -0.30, covid_det_slope = 0.005,  # COVID hits detection harder
+    genexpert_coef  = 0.8,                             # within N(0,1); drives the detection rise
+    theta0 = 1.0986, theta_time = 0.03, theta_idc = -1.0,  # all within their priors
     p_mort_aban = 0.05, p_mort_nonotif = 0.565
   ))
 }
