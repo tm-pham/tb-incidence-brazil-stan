@@ -110,9 +110,12 @@ simulate_state_month <- function(design, kernels, params, covariates,
 #' death-reporting trend). Because the basis is orthonormal, `B %*% (B' target)`
 #' is the L2 projection of the target onto the spline span (a near-exact match
 #' for a smooth target). Every true value sits INSIDE the model's priors
-#' (genexpert_coef 0.8 < N(0,1); theta_idc -1.0 < N(0,1); theta_time 0.03 <
-#' N(0,0.05)), so recovery is not fighting the prior. These are realistic
-#' synthetic truth, not draws from the wide fitting priors.
+#' (genexpert_coef 0.8 (half-normal >0); theta_idc -7.6 ~ N(-7.6,2.0); theta0 2.0
+#' ~ N(2.0,0.20); theta_time 0.03 ~ N(0,0.05)), so recovery is not fighting the
+#' prior. The informative, NEGATIVE theta_idc (death-reporting completeness falls
+#' with the ill-defined-cause fraction; Chitwood 2021 anchors) is what breaks the
+#' detection vs death-reporting confound. These are realistic synthetic truth, not
+#' draws from the wide fitting priors.
 #'
 #' @param design Output of `build_design()`.
 #' @param seed Integer seed (only the small seasonal coefficients are random).
@@ -128,11 +131,11 @@ default_true_params <- function(design, seed = 1L) {
     beta_season_inc = stats::rnorm(H2, 0, 0.05),
     covid_inc_level = -0.20, covid_inc_slope = 0.004,
     det_intercept   = 0.3,
-    beta_trend_det  = proj(0.08 * axis),               # small smooth detection rise
+    beta_trend_det  = proj(0.04 * axis),               # SMALL smooth detection rise (trend prior is tight; rise is via genexpert)
     beta_season_det = stats::rnorm(H2, 0, 0.03),
     covid_det_level = -0.30, covid_det_slope = 0.005,  # COVID hits detection harder
-    genexpert_coef  = 0.8,                             # within N(0,1); drives the detection rise
-    theta0 = 1.0986, theta_time = 0.03, theta_idc = -1.0,  # all within their priors
+    genexpert_coef  = 0.8,                             # >0 (half-normal prior); drives the detection rise
+    theta0 = 2.0, theta_time = 0.03, theta_idc = -7.6, # within the informative death-reporting priors (Chitwood 2021 anchors)
     p_mort_aban = 0.05, p_mort_nonotif = 0.565
   ))
 }

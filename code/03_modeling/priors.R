@@ -29,19 +29,30 @@ priors <- function() {
     # --- Death-reporting adjustment: TIME-VARYING logit-linear in IDC (our
     # extension of the 2025 static Beta(150,50), using the Chitwood 2021
     # structure). On the logit scale; theta_time is per YEAR. ---
-    # The BASELINE (theta0) is anchored to the 2025 static informative prior --
-    # Beta(150,50), mean 0.75 -- ported to the logit scale, so the time-varying
-    # adjustment generalises 2025 by adding bounded DRIFT (theta_time, theta_idc)
-    # rather than leaving the level free. Leaving theta0 wide (Normal(0,1)) lets
-    # the death adjustment compete with detection and breaks identification (the
-    # death channel must pin detection); see CLAUDE.md. qlogis(0.75) = 1.0986;
-    # the 2025 prior SD ~0.03 on the probability scale is ~0.16 on the logit
-    # scale, slightly widened to 0.20 to admit drift.
+    # death_adj here is the COMPLETENESS multiplier (fraction of true TB deaths
+    # captured by SIM): exp_deaths = pop * alldeaths * death_adj. This is the 2025
+    # convention. Note Chitwood 2021 parameterises rho as the MISSED fraction with
+    # (1 - rho) in the likelihood, so OUR theta_idc has the OPPOSITE SIGN of 2021's
+    # idc coefficient: ours is NEGATIVE (more ill-defined-cause deaths => lower
+    # completeness).
+    #
+    # theta_idc is LOAD-BEARING: it is what identifies detection vs death-reporting
+    # (a flat/symmetric prior leaves the two confounded along a ridge -- recovery
+    # then sign-flips death_adj; see agent_reviews/2026-06-07). It is anchored to
+    # the Chitwood 2021 two-point expert anchors for rho (the missed fraction):
+    # idc=0.01 -> 0.105, idc=0.15 -> 0.255 (Table S1; literature/notes/priors.md).
+    # Mapping to OUR completeness convention (death_adj = 1 - rho) and solving the
+    # two-point logit line gives slope theta_idc ~ -7.6 and intercept ~ 2.2; we
+    # re-centre theta0 so completeness ~ 0.75 (the 2025 Beta(150,50) baseline) at a
+    # typical idc ~ 0.12: theta0 = qlogis(0.75) + 7.6*0.12 ~ 2.0. The level
+    # difference vs the raw 2021 (1 - rho) ~ 0.8 is the external SIM coverage
+    # (p_cov < 1) folded into theta0 (we have no separate coverage series; open
+    # decision 4 in priors.md). [LOAD-BEARING; PI to confirm the anchor magnitude.]
     death_adj = list(
-      theta0      = c(mean = 1.0986, sd = 0.20),  # anchored to 2025 Beta(150,50) baseline
-      theta_time  = c(mean = 0, sd = 0.05),       # per-year drift ~ Normal(0,0.05) (Chitwood 2021)
-      theta_idc   = c(mean = 0, sd = 1),          # IDC coefficient ~ Normal(0,1)
-      static_2025 = c(a = 150, b = 50)            # reference: 2025 static Beta(150,50)
+      theta0      = c(mean = 2.0,  sd = 0.20),  # completeness ~0.75 at typical idc~0.12 (2025 baseline + idc offset)
+      theta_time  = c(mean = 0, sd = 0.05),     # per-year drift ~ Normal(0,0.05) (Chitwood 2021)
+      theta_idc   = c(mean = -7.6, sd = 2.0),   # IDC slope, informative & NEGATIVE (Chitwood 2021 anchors, completeness convention)
+      static_2025 = c(a = 150, b = 50)          # reference: 2025 static Beta(150,50)
     ),
 
     # --- Latent-series regression priors (Chitwood 2025 Table S2) ---
@@ -51,9 +62,16 @@ priors <- function() {
     det_coef      = c(mean = 0, sd = 1),    # detection trend/COVID coefs
 
     # --- Smoothness / extension priors (no 2025 precedent; our choice) ---
-    trend_sd       = c(mean = 0, sd = 1),   # half-Normal on the spline-coef RW penalty
-    season_sd      = c(mean = 0, sd = 1),   # half-Normal on seasonal coefs
-    genexpert_coef = c(mean = 0, sd = 1)    # GeneXpert detection covariate coef
+    # Incidence trend stays flexible (notifications identify it). The DETECTION
+    # trend is tightened (trend_sd_det) so its smooth component cannot absorb the
+    # secular death-reporting drift -- a second leak into the detection/
+    # death-reporting confound (stan review H1, agent_reviews/2026-06-07). The
+    # detection rise is meant to be carried by the GeneXpert covariate, not a free
+    # smooth trend.
+    trend_sd       = c(mean = 0, sd = 1),    # half-Normal on the incidence spline coefs
+    trend_sd_det   = c(mean = 0, sd = 0.15), # half-Normal on the detection spline coefs (tight)
+    season_sd      = c(mean = 0, sd = 1),    # half-Normal on seasonal coefs
+    genexpert_coef = c(mean = 0, sd = 1)     # half-Normal (coef constrained >0 in Stan): Xpert improves detection
   )
 }
 

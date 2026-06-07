@@ -17,13 +17,18 @@ test_that("case-fatality and death-adjustment priors match the supplement", {
   expect_equal(unname(p$p_mort_aban), c(10, 190))      # death|LTFU ~0.05
   expect_equal(beta_mean(p$p_mort_nonotif), 0.565, tolerance = 1e-3)
   expect_equal(beta_mean(p$p_mort_aban), 0.05, tolerance = 1e-3)
-  # Time-varying death adjustment: baseline anchored to the 2025 static prior
-  # (Beta(150,50), mean 0.75 -> logit 1.0986), drift terms from Chitwood 2021.
-  expect_equal(unname(p$death_adj$theta0), c(1.0986, 0.20))
+  # Time-varying death adjustment (COMPLETENESS convention: death_adj multiplies
+  # deaths). The idc slope is informative and NEGATIVE (Chitwood 2021 anchors,
+  # converted from the missed-fraction convention); theta0 is re-centred so
+  # completeness ~ 0.75 (the 2025 Beta(150,50) baseline) at a TYPICAL idc ~ 0.12,
+  # NOT at idc=0. See priors.R and agent_reviews/2026-06-07.
+  expect_equal(unname(p$death_adj$theta0), c(2.0, 0.20))
   expect_equal(unname(p$death_adj$theta_time), c(0, 0.05))
   expect_equal(unname(p$death_adj$static_2025), c(150, 50))
-  expect_equal(unname(plogis(p$death_adj$theta0[["mean"]])),
-               beta_mean(p$death_adj$static_2025), tolerance = 1e-3)  # baseline ~ 0.75
+  # Completeness at a typical idc ~ 0.12 returns to the 2025 static baseline ~0.75.
+  idc_typical <- 0.12
+  baseline <- plogis(p$death_adj$theta0[["mean"]] + p$death_adj$theta_idc[["mean"]] * idc_typical)
+  expect_equal(unname(baseline), beta_mean(p$death_adj$static_2025), tolerance = 5e-3)
 })
 
 test_that("regression priors match (incidence wide, detection tight)", {
@@ -37,6 +42,15 @@ test_that("regression priors match (incidence wide, detection tight)", {
 
 test_that("death-adjustment drift and GeneXpert coefficient priors are pinned", {
   p <- priors()
-  expect_equal(unname(p$death_adj$theta_idc), c(0, 1))
+  # theta_idc is LOAD-BEARING: informative & negative (it identifies detection vs
+  # death-reporting; a flat/symmetric prior leaves them confounded). Anchored to
+  # the Chitwood 2021 two-point rho anchors mapped to the completeness convention.
+  expect_equal(unname(p$death_adj$theta_idc), c(-7.6, 2.0))
+  expect_true(p$death_adj$theta_idc[["mean"]] < 0)        # sign is load-bearing
+  # Detection spline tightened so it cannot absorb death-reporting drift; the
+  # incidence spline stays wide.
+  expect_equal(unname(p$trend_sd_det), c(0, 0.15))
+  expect_lt(p$trend_sd_det[["sd"]], p$trend_sd[["sd"]])
+  # GeneXpert coef hyperparameter stays (0,1); the >0 sign constraint is in Stan.
   expect_equal(unname(p$genexpert_coef), c(0, 1))
 })

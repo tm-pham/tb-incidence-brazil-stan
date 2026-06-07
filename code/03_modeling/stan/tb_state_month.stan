@@ -78,6 +78,7 @@ data {
   real theta0_mean;                       // death-adjustment baseline (logit scale)
   real<lower=0> theta0_sd;
   real<lower=0> theta_time_sd;
+  real theta_idc_mean;                     // informative IDC slope (negative; from Chitwood 2021 anchors)
   real<lower=0> theta_idc_sd;
   real<lower=0> pmort_nonotif_a;
   real<lower=0> pmort_nonotif_b;
@@ -109,7 +110,7 @@ parameters {
   real<lower=0> sigma_season_det;
   real covid_det_level;
   real covid_det_slope;
-  real genexpert_coef;
+  real<lower=0> genexpert_coef;            // Xpert improves detection: sign known positive
 
   real theta0;
   real theta_time;
@@ -171,7 +172,7 @@ model {
 
   theta0 ~ normal(theta0_mean, theta0_sd);
   theta_time ~ normal(0, theta_time_sd);
-  theta_idc ~ normal(0, theta_idc_sd);
+  theta_idc ~ normal(theta_idc_mean, theta_idc_sd);  // informative, negative (death-reporting completeness falls with IDC)
 
   p_mort_aban ~ beta(pmort_aban_a, pmort_aban_b);
   p_mort_nonotif ~ beta(pmort_nonotif_a, pmort_nonotif_b);
