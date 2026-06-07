@@ -161,7 +161,7 @@ default_n_pre <- function(pr = priors()) {
 #'   params_by_state, priors).
 simulate_tb_dataset <- function(n_states = 3L, n_obs = 252L,
                                 start_month_of_year = 1L, covid_break = 208L,
-                                n_trend_knots = 6L, n_harmonics = 2L,
+                                n_trend_knots = 8L, n_harmonics = 2L,
                                 seed = 20240603L) {
   pr <- priors()
   kernels <- build_delay_kernels(pr$delays)

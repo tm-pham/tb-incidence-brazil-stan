@@ -59,8 +59,8 @@ build_stan_model_data <- function(obs, design, kernels, pr = priors(),
     inc_coef_sd = num(pr$inc_coef["sd"]),
     det_intercept_sd = num(pr$det_intercept["sd"]),
     det_coef_sd = num(pr$det_coef["sd"]),
-    trend_sd_inc = num(pr$trend_sd["sd"]), trend_sd_det = num(pr$trend_sd_det["sd"]),
-    season_sd_inc = num(pr$season_sd["sd"]), season_sd_det = num(pr$season_sd_det["sd"]),
+    trend_sd_inc = num(pr$trend_sd["sd"]), trend_sd_det = num(pr$trend_sd["sd"]),
+    season_sd_inc = num(pr$season_sd["sd"]), season_sd_det = num(pr$season_sd["sd"]),
     genexpert_coef_sd = num(pr$genexpert_coef["sd"]),
     theta0_mean = num(pr$death_adj$theta0["mean"]),
     theta0_sd = num(pr$death_adj$theta0["sd"]),
@@ -87,7 +87,7 @@ build_stan_model_data <- function(obs, design, kernels, pr = priors(),
 #' @param n_trend_knots,n_harmonics Basis sizes.
 #' @param ... Passed to build_stan_model_data (e.g. prior_only).
 stan_data_from_panel <- function(assembled, uf, start_month_of_year = 1L,
-                                 covid_break = NULL, n_trend_knots = 6L,
+                                 covid_break = NULL, n_trend_knots = 8L,
                                  n_harmonics = 2L, pr = priors(), ...) {
   source(here::here("code", "02_data_processing", "prepare_stan_data.R"), local = TRUE)
   sd1 <- stan_data_for_state(assembled, uf)

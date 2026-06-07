@@ -32,7 +32,7 @@
 #' RW penalty, a deliberate trade for identifiability/convergence). Because the
 #' centred columns are all orthogonal to the constant, the QR columns are too, so
 #' the basis stays mean-zero.
-trend_basis <- function(n_total, n_knots = 6L, degree = 3L) {
+trend_basis <- function(n_total, n_knots = 8L, degree = 3L) {
   tt <- seq_len(n_total)
   probs <- seq(0, 1, length.out = n_knots + 2L)[-c(1L, n_knots + 2L)]
   knots <- as.numeric(stats::quantile(tt, probs = probs))
@@ -70,7 +70,7 @@ seasonal_basis <- function(month_of_year, n_harmonics = 2L) {
 #' @return A list of the time index, month-of-year, trend/seasonal bases, and the
 #'   COVID level/slope columns, all on the extended axis.
 build_design <- function(n_obs, n_pre, start_month_of_year = 1L,
-                         covid_break = NULL, n_trend_knots = 6L,
+                         covid_break = NULL, n_trend_knots = 8L,
                          n_harmonics = 2L) {
   n_total <- n_pre + n_obs
   obs_index <- seq_len(n_total) - n_pre               # <=0 pre-window, 1..n_obs
