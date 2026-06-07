@@ -21,6 +21,16 @@ test_that("the model recovers known monthly incidence and detection", {
   design <- build_design(n_obs, n_pre, start_month_of_year = 1L,
                          covid_break = 124L, n_trend_knots = 6L, n_harmonics = 2L)
   params <- default_true_params(design, seed = 1L)
+  # Give detection a clear, recoverable trajectory. The default truth leaves
+  # detection nearly flat (delta sd ~0.015, span ~0.07 over 13 years), so the
+  # detection-vs-truth correlation below is noise-dominated and flaps by +/-0.05
+  # with trivial config changes -- not a real recovery guardrail. Drive a
+  # realistic GeneXpert-era rise (detection ~0.55 -> ~0.74, span ~0.19) so
+  # detection recovery genuinely tests the death-channel identification. The rise
+  # is carried mostly by the genexpert covariate (a direct model term), so it is
+  # recoverable independent of the spline knot count.
+  params$genexpert_coef <- 1.5
+  params$beta_trend_det <- params$beta_trend_det * 3
   cov <- synthetic_covariates(n_obs, population = 2e6)
   truth <- simulate_state_month(design, kernels, params, cov, seed = 99L)
 
