@@ -51,8 +51,15 @@ priors <- function() {
     det_coef      = c(mean = 0, sd = 1),    # detection trend/COVID coefs
 
     # --- Smoothness / extension priors (no 2025 precedent; our choice) ---
-    trend_sd       = c(mean = 0, sd = 0.5), # half-Normal on the (orthonormal) trend coefs; regularises amplitude/funnel
-    season_sd      = c(mean = 0, sd = 0.5), # half-Normal on seasonal coefs
+    # Incidence trend/season are well-identified by notifications, so a tighter
+    # half-Normal regularises amplitude and the variance funnel (helps HMC
+    # geometry). Detection is identified only through the sparser death channel,
+    # so it keeps the wider scale: tightening detection over-shrinks it (the
+    # recovery test's detection correlation fell below threshold at 0.5).
+    trend_sd       = c(mean = 0, sd = 0.5), # half-Normal on incidence (orthonormal) trend coefs
+    trend_sd_det   = c(mean = 0, sd = 1),   # half-Normal on detection trend coefs (needs room)
+    season_sd      = c(mean = 0, sd = 0.5), # half-Normal on incidence seasonal coefs
+    season_sd_det  = c(mean = 0, sd = 1),   # half-Normal on detection seasonal coefs
     genexpert_coef = c(mean = 0, sd = 1)    # GeneXpert detection covariate coef
   )
 }
