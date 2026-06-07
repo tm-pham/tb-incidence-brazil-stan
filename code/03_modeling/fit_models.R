@@ -82,11 +82,13 @@ fit_base_model <- function(stan_data, seed,
             "theta0", "theta_time", "theta_idc",
             "p_mort_aban", "p_mort_nonotif")
   s <- fit$summary(variables = vars)
+  ds <- fit$diagnostic_summary()
   diagnostics <- list(
     max_rhat = max(s$rhat, na.rm = TRUE),
     min_ess_bulk = min(s$ess_bulk, na.rm = TRUE),
     min_ess_tail = min(s$ess_tail, na.rm = TRUE),
-    num_divergent = sum(fit$diagnostic_summary()$num_divergent)
+    num_divergent = sum(ds$num_divergent),
+    num_max_treedepth = sum(ds$num_max_treedepth)
   )
   list(fit = fit, cmdstan_version = cmdstanr::cmdstan_version(),
        seed = seed, diagnostics = diagnostics)
