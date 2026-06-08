@@ -34,6 +34,9 @@ test_that("seasonal_profile recovers a known injected seasonal signal", {
   expect_equal(sp$amplitude$trough_month, 1L)      # cos = -1 at m = 1
   expect_equal(sp$amplitude$amplitude, 0.20, tolerance = 0.01)   # 2 * amp
   expect_gt(sp$amplitude$seasonal_strength, 0.99)  # deterministic -> ~1
+  # Robust first-harmonic phase/amplitude recover the same injected signal.
+  expect_equal(sp$amplitude$h1_peak_month, 7, tolerance = 0.05)
+  expect_equal(sp$amplitude$h1_amplitude, 0.20, tolerance = 0.01)
   # Index is centred on 1 and the peak is above, trough below.
   expect_equal(mean(sp$profile$index_mean), 1, tolerance = 1e-3)
   expect_gt(sp$profile$index_mean[7], sp$profile$index_mean[1])
@@ -55,6 +58,10 @@ test_that("era split reveals a strengthening seasonal signal (drift)", {
   a <- sp$amplitude[order(era)]                    # eras sort chronologically
   expect_equal(a$amplitude, c(0.10, 0.30, 0.50), tolerance = 0.02)  # 2 * amp per era
   expect_true(all(a$peak_month == 7L))             # phase stable, amplitude grows
+  # The robust harmonic phase stays put across eras (the point of this statistic):
+  # amplitude grows but h1_peak_month does not move.
+  expect_equal(a$h1_peak_month, rep(7, 3), tolerance = 0.05)
+  expect_equal(a$h1_amplitude, c(0.10, 0.30, 0.50), tolerance = 0.02)
 })
 
 test_that("pooling across states and the deaths channel both run", {

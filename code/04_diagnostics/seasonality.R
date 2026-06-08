@@ -35,7 +35,10 @@
 #'     index scale, i.e. fraction of the annual mean), seasonal_strength (share
 #'     of the within-year, detrended variance explained by the stable
 #'     month-of-year pattern, 0..1; high = strong, repeatable seasonality, low =
-#'     the monthly differences are mostly noise).
+#'     the monthly differences are mostly noise), and the robust first-harmonic
+#'     summary h1_amplitude (peak-trough of the period-12 harmonic) and
+#'     h1_peak_month (its phase as a month in (0,12]; stable across eras unless
+#'     the seasonal phase genuinely drifts).
 seasonal_profile <- function(panel, value = "notifications", uf = NULL,
                              era_breaks = NULL) {
   stopifnot(data.table::is.data.table(panel))
@@ -89,8 +92,24 @@ seasonal_profile <- function(panel, value = "notifications", uf = NULL,
         1 - stats::var(index - month_mean) / vi else 0)
   }, by = era]
   amp <- strength[amp, on = "era"]
-  data.table::setcolorder(amp, c("era", "peak_month", "trough_month",
-                                 "amplitude", "seasonal_strength"))
+
+  # Robust phase/amplitude: fit the index on a 2-harmonic basis within each era
+  # and read off the FIRST harmonic (period 12). Its amplitude is 2*sqrt(a^2+b^2)
+  # and its peak month is the phase angle in months -- far more stable across eras
+  # than the argmax peak_month, which jumps between near-ties when the profile is
+  # noisy. Compare h1_peak_month across eras to judge whether the phase truly
+  # moves (drift) or the argmax was just chasing noise.
+  harm <- d[, {
+    c1 <- cos(2 * pi * month / 12); s1 <- sin(2 * pi * month / 12)
+    c2 <- cos(4 * pi * month / 12); s2 <- sin(4 * pi * month / 12)
+    co <- stats::coef(stats::lm(index ~ c1 + s1 + c2 + s2))
+    pk <- (atan2(co[["s1"]], co[["c1"]]) * 6 / pi) %% 12   # phase -> month, in (0,12]
+    .(h1_amplitude = 2 * sqrt(co[["c1"]]^2 + co[["s1"]]^2),
+      h1_peak_month = if (pk <= 0) pk + 12 else pk)
+  }, by = era]
+  amp <- harm[amp, on = "era"]
+  data.table::setcolorder(amp, c("era", "peak_month", "trough_month", "amplitude",
+                                 "seasonal_strength", "h1_amplitude", "h1_peak_month"))
 
   list(profile = prof[], amplitude = amp[])
 }
