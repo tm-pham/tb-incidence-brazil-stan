@@ -83,8 +83,15 @@ test_that("stan_data_from_panel bridges a real assembled panel (COVID inferred)"
                                  covid_break_month = 4L)
   sd <- stan_data_from_panel(assembled, 35L, start_month_of_year = 1L)
   expect_equal(sd$N_obs, 36L)
-  # COVID break inferred from the panel = April 2020 = obs month 16; 21 post months.
-  expect_equal(sum(sd$covid_level[(sd$N_pre + 1L):(sd$N_pre + sd$N_obs)]), 21)
+  # COVID break inferred from the panel = April 2020 = obs month 16 (21 post months).
+  # covid_level is residualised against the trend in build_design (decorrelation),
+  # so it is no longer the raw 0/1 step; verify the break was found and placed in
+  # the right window: the column is non-trivial and positive after the break,
+  # negative before (the pre/post shock direction survives residualisation).
+  obs_lvl <- sd$covid_level[(sd$N_pre + 1L):(sd$N_pre + sd$N_obs)]
+  expect_gt(sum(abs(obs_lvl)), 0)                    # a break was detected
+  expect_gt(mean(obs_lvl[16:36]), 0)                 # positive from April 2020 on
+  expect_lt(mean(obs_lvl[1:15]), 0)                  # negative before
   expect_length(sd$sinan, 36L)
   expect_equal(sd$idc, rep(0.1, 36L))
 })

@@ -75,14 +75,35 @@ build_design <- function(n_obs, n_pre, start_month_of_year = 1L,
   n_total <- n_pre + n_obs
   obs_index <- seq_len(n_total) - n_pre               # <=0 pre-window, 1..n_obs
   moy <- ((obs_index - 1L + (start_month_of_year - 1L)) %% 12L) + 1L
+  B_trend <- trend_basis(n_total, n_trend_knots)
   covid_level <- if (is.null(covid_break)) rep(0, n_total) else
     as.numeric(obs_index >= covid_break)
   covid_slope <- if (is.null(covid_break)) rep(0, n_total) else
     pmax(obs_index - covid_break + 1L, 0)
+  # Decorrelate the COVID columns from the intercept + smooth trend (and the slope
+  # from the level) so their coefficients do not ride the late spline coefficients.
+  # That trend<->COVID posterior correlation is what saturated max treedepth on the
+  # 252-month real data (a dense mass matrix confirmed correlation -- not a
+  # variance funnel -- as the cause, but is too costly to adapt). B_trend is
+  # orthonormal and mean-zero, so subtracting the mean and the B_trend projection
+  # orthogonalises a column against span{1, B_trend}. This leaves the incidence /
+  # detection SERIES unchanged (same column space) but removes the correlated
+  # direction, so the cheap diagonal metric mixes cleanly. The COVID coefficients
+  # become the trend-orthogonal shock (a cleaner, better-identified estimand).
+  if (!is.null(covid_break)) {
+    resid_trend <- function(v) {
+      v <- v - mean(v)
+      v - as.numeric(B_trend %*% crossprod(B_trend, v))
+    }
+    covid_level <- resid_trend(covid_level)
+    covid_slope <- resid_trend(covid_slope)
+    d <- sum(covid_level^2)
+    if (d > 0) covid_slope <- covid_slope - (sum(covid_slope * covid_level) / d) * covid_level
+  }
   list(
     n_total = n_total, n_pre = n_pre, n_obs = n_obs, obs_index = obs_index,
     month_of_year = moy,
-    B_trend = trend_basis(n_total, n_trend_knots),
+    B_trend = B_trend,
     S_season = seasonal_basis(moy, n_harmonics),
     covid_level = covid_level, covid_slope = covid_slope
   )
