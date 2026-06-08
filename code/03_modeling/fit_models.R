@@ -55,6 +55,7 @@ fit_base_model <- function(stan_data, seed,
                            chains = 4L, parallel_chains = chains,
                            iter_warmup = 4000L, iter_sampling = 1000L,
                            adapt_delta = 0.99, max_treedepth = 12L,
+                           metric = "diag_e",
                            inc_intercept_init = -9, refresh = 0L) {
   if (missing(seed) || is.null(seed)) {
     stop("fit_base_model: an explicit integer `seed` is required.")
@@ -63,11 +64,17 @@ fit_base_model <- function(stan_data, seed,
   # below controls only Stan's HMC RNG).
   withr::local_seed(seed)
   if (is.null(model)) model <- compile_tb_model()
+  # metric: "diag_e" (default) or "dense_e". The 252-month posterior is strongly
+  # correlated (trend coefficients <-> COVID slope, re-correlated by the
+  # convolution likelihood), which a diagonal mass matrix navigates with very long
+  # trajectories (treedepth saturation). A dense metric adapts the full ~40x40
+  # covariance, moving along the correlated directions directly; usually collapses
+  # treedepth and lifts ESS. Costs a bit more warmup; needs >=~1000 warmup draws.
   fit <- model$sample(
     data = stan_data, seed = seed,
     chains = chains, parallel_chains = parallel_chains,
     iter_warmup = iter_warmup, iter_sampling = iter_sampling,
-    adapt_delta = adapt_delta, max_treedepth = max_treedepth,
+    adapt_delta = adapt_delta, max_treedepth = max_treedepth, metric = metric,
     init = init_tb_model(stan_data, inc_intercept_init), refresh = refresh
   )
   # Convergence summary over the ESTIMANDS (incidence_rate, detection) and all

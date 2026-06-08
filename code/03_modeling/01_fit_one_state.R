@@ -30,6 +30,7 @@ warmup     <- as.integer(Sys.getenv("TB_FIT_WARMUP", if (fast) "1500" else "4000
 sampling   <- as.integer(Sys.getenv("TB_FIT_SAMPLING", "1000"))
 adapt      <- as.numeric(Sys.getenv("TB_FIT_ADAPT_DELTA", "0.99"))
 treedepth  <- as.integer(Sys.getenv("TB_FIT_TREEDEPTH", "12"))
+metric     <- Sys.getenv("TB_FIT_METRIC", "diag_e")  # "dense_e" for the correlated 252-month posterior
 
 # Load the assembled panel (prefer the targets store; fall back to the rds).
 assembled <- tryCatch(
@@ -42,14 +43,14 @@ if (!target_uf %in% assembled$states) {
 
 message("Fitting uf ", target_uf, " (", UF_ABBREV[[as.character(target_uf)]], "); ",
         warmup, " warmup + ", sampling, " sampling, ", n_chains,
-        " chains, adapt_delta ", adapt,
+        " chains, adapt_delta ", adapt, ", metric ", metric,
         ". One ~250-month series; expect tens of minutes to a few hours.")
 
 sd <- stan_data_from_panel(assembled, target_uf, start_month_of_year = 1L)
 res <- fit_base_model(
   sd, seed = GLOBAL_SEED + target_uf, chains = n_chains, parallel_chains = n_chains,
   iter_warmup = warmup, iter_sampling = sampling, adapt_delta = adapt,
-  max_treedepth = treedepth, refresh = 200L)
+  max_treedepth = treedepth, metric = metric, refresh = 200L)
 
 cat("\n== convergence diagnostics ==\n"); str(res$diagnostics)
 cat("cmdstan version:", res$cmdstan_version, "\n")
