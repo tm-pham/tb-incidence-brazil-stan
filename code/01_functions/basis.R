@@ -80,25 +80,32 @@ build_design <- function(n_obs, n_pre, start_month_of_year = 1L,
     as.numeric(obs_index >= covid_break)
   covid_slope <- if (is.null(covid_break)) rep(0, n_total) else
     pmax(obs_index - covid_break + 1L, 0)
-  # Decorrelate the COVID columns from the intercept + smooth trend (and the slope
-  # from the level) so their coefficients do not ride the late spline coefficients.
-  # That trend<->COVID posterior correlation is what saturated max treedepth on the
+  # Decorrelate the smooth trend from the COVID shock. The high-dimensional
+  # trend<->COVID posterior correlation is what saturated max treedepth on the
   # 252-month real data (a dense mass matrix confirmed correlation -- not a
-  # variance funnel -- as the cause, but is too costly to adapt). B_trend is
-  # orthonormal and mean-zero, so subtracting the mean and the B_trend projection
-  # orthogonalises a column against span{1, B_trend}. This leaves the incidence /
-  # detection SERIES unchanged (same column space) but removes the correlated
-  # direction, so the cheap diagonal metric mixes cleanly. The COVID coefficients
-  # become the trend-orthogonal shock (a cleaner, better-identified estimand).
-  if (!is.null(covid_break)) {
-    resid_trend <- function(v) {
-      v <- v - mean(v)
-      v - as.numeric(B_trend %*% crossprod(B_trend, v))
-    }
-    covid_level <- resid_trend(covid_level)
-    covid_slope <- resid_trend(covid_slope)
+  # variance funnel -- but is too costly to adapt). We keep the COVID columns as
+  # clean (mean-centred) step / ramp shapes -- the interpretable, well-identified
+  # shock estimand -- and instead remove the COVID-spanned direction FROM the
+  # spline trend, so the flexible trend cannot absorb the COVID jump. The reverse
+  # (orthogonalising COVID against the trend) turns covid_level into a ringing
+  # artefact and destroys COVID-window recovery -- the recovery test confirmed
+  # this (covid_inc_level recovered with the wrong sign, COVID-window incidence
+  # cor 0.69). After this, {1, covid_level, covid_slope, trend cols} are mutually
+  # orthogonal, so the cheap diagonal metric mixes cleanly, while the COVID
+  # coefficients keep their clean level / slope meaning.
+  if (!is.null(covid_break) && stats::var(covid_level) > 0) {
+    covid_level <- covid_level - mean(covid_level)          # center: covid_level _|_ 1
+    covid_slope <- covid_slope - mean(covid_slope)
     d <- sum(covid_level^2)
     if (d > 0) covid_slope <- covid_slope - (sum(covid_slope * covid_level) / d) * covid_level
+    # Remove the COVID span from the (orthonormal, mean-zero) trend, then
+    # re-orthonormalise. The smooth spline cannot represent a step/ramp, so the
+    # projected basis stays full rank and orthogonal to the COVID columns.
+    # qr.fitted projects onto the COVID column space rank-safely (handles the
+    # degenerate single-post-month case where the slope collapses into the level).
+    C <- cbind(covid_level, covid_slope)
+    B_trend <- B_trend - qr.fitted(qr(C), B_trend)
+    B_trend <- qr.Q(qr(B_trend))
   }
   list(
     n_total = n_total, n_pre = n_pre, n_obs = n_obs, obs_index = obs_index,
