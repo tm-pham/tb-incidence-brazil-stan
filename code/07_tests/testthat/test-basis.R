@@ -39,11 +39,11 @@ test_that("build_design lays out the extended axis and COVID terms", {
   expect_equal(d$obs_index[d$n_total], 24L)
   expect_true(all(d$month_of_year >= 1L & d$month_of_year <= 12L))
   expect_equal(d$month_of_year[d$n_pre + 1L], 1L)     # observed month 1 = January
-  # COVID columns are residualised against the intercept + trend (and the slope
-  # against the level) to decorrelate them from the spline trend, so they are no
-  # longer the raw 0/1 step / 1,2,... ramp. Check the decorrelation invariants:
-  # mean-zero, orthogonal to the trend basis and to each other, and the level is
-  # still predominantly positive in the post-break window (the shock direction).
+  # The COVID columns are kept as clean mean-centred step / ramp shapes; the TREND
+  # is orthogonalised against them (in build_design) to decorrelate the trend<->COVID
+  # geometry. Check the resulting invariants: covid_level is mean-zero, the trend
+  # basis is orthogonal to both COVID columns, the two COVID columns are orthogonal,
+  # and covid_level is still positive in the post-break window (the shock direction).
   expect_lt(abs(mean(d$covid_level)), 1e-8)
   expect_lt(max(abs(crossprod(d$B_trend, d$covid_level))), 1e-6)
   expect_lt(max(abs(crossprod(d$B_trend, d$covid_slope))), 1e-6)
