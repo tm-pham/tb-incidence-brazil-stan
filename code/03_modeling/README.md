@@ -48,6 +48,37 @@ and detection from simulated data):
 RUN_RECOVERY_TEST=1 Rscript code/07_tests/testthat.R
 ```
 
-Expect convergence on the 252-month series to be the hard part: reparameterise
-(the spline is already non-centred) rather than only raising `adapt_delta`.
-Record the cmdstan version (done by `fit_base_model()`), and pin it + `renv`.
+Then fit one state as a sanity check, and all 27 for production:
+
+```r
+# one state (Sao Paulo), local:
+Rscript code/03_modeling/01_fit_one_state.R              # TB_FIT_UF=35 by default
+# all 27 states, sequential (compile once), writes outputs/estimates/convergence_summary.csv:
+Rscript code/03_modeling/02_fit_all_states.R
+```
+
+On CHPC, prefer the SLURM array (one state per task): submit the compile step
+first so the 27 tasks reuse one binary, then the array with a dependency:
+
+```bash
+cid=$(sbatch --parsable --wrap "Rscript code/03_modeling/00_precompile_model.R")
+sbatch --dependency=afterok:$cid code/00_chpc_scripts/fit_all_states.slurm
+```
+
+### Sampler config and convergence (decided 2026-06-10)
+
+Production uses the **diagonal** metric: 4000 warmup + 2000 sampling, adapt_delta
+0.95, max_treedepth 12, 4 chains. The dense metric was tested and **rejected** (it
+wrecked mixing: R-hat 1.08, ESS 35). The incidence<->detection level / death-channel
+ridge is intrinsic to the data (notifications pin only the product; the split rests
+on sparse deaths + priors), so no metric removes it -- diag_e gives valid draws at
+the cost of treedepth saturation (an efficiency, not a validity, issue). See
+`agent_reviews/2026-06-10-convergence-decision-ship-diag_e.md`.
+
+Convergence is judged on the **estimands**: `fit_base_model()` reports
+`max_rhat_estimand` / `min_ess_bulk_estimand` (over `incidence_rate` / `detection`)
+and `02_fit_all_states.R` flags a state WARN if estimand R-hat > 1.01 or estimand
+bulk ESS < 400. Slow nuisance level / death-channel scalars and 100% treedepth are
+expected. A state whose ESTIMANDS warn needs the deferred model-level reparam of
+the ridge, not a sampler tweak. Reparameterise rather than only raising
+`adapt_delta`; record the cmdstan version (done by `fit_base_model()`), pin it + `renv`.
